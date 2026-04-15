@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Panel Admin | Innova-T English Institute</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="dashboard-body">
+  <div class="dashboard-shell">
+    <aside class="sidebar">
+      <a class="brand" href="index.html">
+        <span class="brand-mark">IT</span>
+        <span>
+          <strong>Innova-T</strong>
+          <small>Admin Space</small>
+        </span>
+      </a>
+
+      <nav class="sidebar-nav">
+        <a class="active" href="admin-dashboard.html">Dashboard</a>
+        <a href="#agenda">Agenda</a>
+        <a href="#asignaciones">Asignaciones</a>
+        <a href="#progreso">Progreso</a>
+        <a href="#reportes">Reportes</a>
+      </nav>
+
+      <div class="sidebar-card">
+        <span>Resumen del dia</span>
+        <strong>18 estudiantes</strong>
+        <small>6 clases activas</small>
+      </div>
+    </aside>
+
+    <main class="dashboard-main">
+      <header class="dashboard-header">
+        <div>
+          <span class="eyebrow">Panel admin / teacher</span>
+          <h1>Control academico</h1>
+          <p>Vista demostrativa para gestionar clases, asignaciones y seguimiento de estudiantes.</p>
+        </div>
+        <div class="header-actions">
+          <a class="btn btn-secondary" href="login.html">Cerrar demo</a>
+        </div>
+      </header>
+
+      <section class="dashboard-grid top-grid">
+        <article class="metric-card">
+          <span>Clases hoy</span>
+          <strong>06</strong>
+          <small>3 grupales y 3 individuales</small>
+        </article>
+        <article class="metric-card">
+          <span>Estudiantes activos</span>
+          <strong>42</strong>
+          <small>8 nuevos este mes</small>
+        </article>
+        <article class="metric-card">
+          <span>Tasa de aprobacion</span>
+          <strong>94%</strong>
+          <small>Promedio trimestral</small>
+        </article>
+      </section>
+
+      <section id="agenda" class="dashboard-grid split-grid">
+        <article class="panel-card">
+          <div class="panel-head">
+            <h2>Agenda del dia</h2>
+          </div>
+          <div class="topic-list">
+            <div>
+              <strong>4:00 PM - Basic Grammar</strong>
+              <span>Grupo A2</span>
+            </div>
+            <div>
+              <strong>6:00 PM - Speaking Fluency</strong>
+              <span>Valentina M.</span>
+            </div>
+            <div>
+              <strong>7:30 PM - Business English</strong>
+              <span>Corporate Team</span>
+            </div>
+          </div>
+        </article>
+
+        <article id="asignaciones" class="panel-card highlight-card">
+          <div class="panel-head">
+            <h2>Asignar clase</h2>
+            <span class="tag">Solo vista</span>
+          </div>
+          <div class="topic-list">
+            <div>
+              <strong>Estudiante</strong>
+              <span>Valentina Montoya</span>
+            </div>
+            <div>
+              <strong>Teacher</strong>
+              <span>Camila Rojas</span>
+            </div>
+            <div>
+              <strong>Horario</strong>
+              <span>Hoy - 6:00 PM</span>
+            </div>
+          </div>
+          <button type="button" class="btn btn-primary">Guardar asignacion</button>
+        </article>
+      </section>
+
+      <section id="progreso" class="dashboard-grid split-grid">
+        <article class="panel-card">
+          <div class="panel-head">
+            <h2>Seguimiento del estudiante</h2>
+          </div>
+          <ul class="check-list">
+            <li class="done">Asistio a Pronunciation Booster</li>
+            <li class="done">Completo Oral Assessment</li>
+            <li class="done">Reviso Topic Session 16</li>
+            <li>Pendiente Written Mock Test</li>
+          </ul>
+        </article>
+
+        <article id="reportes" class="panel-card">
+          <div class="panel-head">
+            <h2>Resultados recientes</h2>
+          </div>
+          <div class="grades-grid">
+            <article class="grade-card success">
+              <span>Oral exam</span>
+              <strong>91/100</strong>
+              <small>Passed</small>
+            </article>
+            <article class="grade-card neutral">
+              <span>Written exam</span>
+              <strong>86/100</strong>
+              <small>Approved</small>
+            </article>
+          </div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

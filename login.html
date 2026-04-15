@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login Demo | Innova-T English Institute</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="auth-body">
+  <main class="auth-layout">
+    <section class="auth-showcase">
+      <a class="brand" href="index.html">
+        <span class="brand-mark">IT</span>
+        <span>
+          <strong>Innova-T</strong>
+          <small>English Institute</small>
+        </span>
+      </a>
+
+      <span class="eyebrow">Acceso demo</span>
+      <h1>Una experiencia de login premium para estudiantes y administracion.</h1>
+      <p>
+        Esta pantalla valida formato de correo y longitud minima de clave solo a nivel visual,
+        ideal para presentacion comercial sin backend.
+      </p>
+
+      <div class="auth-preview-list">
+        <article class="preview-item">
+          <strong>Reserva de clases</strong>
+          <span>Acceso al panel con agenda y sesiones disponibles.</span>
+        </article>
+        <article class="preview-item">
+          <strong>Teacher asignado</strong>
+          <span>El estudiante consulta su clase 10 minutos antes del inicio.</span>
+        </article>
+        <article class="preview-item">
+          <strong>Resultados y workshops</strong>
+          <span>Historial visual con asistencia y calificaciones.</span>
+        </article>
+      </div>
+    </section>
+
+    <section class="auth-panel">
+      <div class="auth-card">
+        <div class="tabs">
+          <button class="tab-btn active" type="button" data-role="student">Estudiante</button>
+          <button class="tab-btn" type="button" data-role="admin">Admin / Teacher</button>
+        </div>
+
+        <div class="auth-card-header">
+          <span class="eyebrow">Bienvenido</span>
+          <h2>Inicia sesion</h2>
+          <p>Ingresa tus datos para entrar a la demo de plataforma academica.</p>
+        </div>
+
+        <form id="loginForm" class="auth-form" novalidate>
+          <input type="hidden" id="roleInput" value="student" />
+
+          <label for="email">Correo electronico</label>
+          <input id="email" name="email" type="email" placeholder="estudiante@email.com" />
+
+          <label for="password">Contrasena</label>
+          <input id="password" name="password" type="password" placeholder="Minimo 6 caracteres" />
+
+          <div class="auth-meta">
+            <span id="roleBadge" class="role-badge">Rol actual: Estudiante</span>
+            <a href="index.html">Volver al inicio</a>
+          </div>
+
+          <p id="formMessage" class="form-message" aria-live="polite"></p>
+
+          <button class="btn btn-primary full-width" type="submit">Entrar a la demo</button>
+        </form>
+
+        <div class="demo-access">
+          <a class="quick-card" href="student-dashboard.html">
+            <span>Vista rapida</span>
+            <strong>Panel estudiante</strong>
+          </a>
+          <a class="quick-card" href="admin-dashboard.html">
+            <span>Vista rapida</span>
+            <strong>Panel admin</strong>
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>

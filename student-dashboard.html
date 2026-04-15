@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Panel Estudiante | Innova-T English Institute</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="dashboard-body">
+  <div class="dashboard-shell">
+    <aside class="sidebar">
+      <a class="brand" href="index.html">
+        <span class="brand-mark">IT</span>
+        <span>
+          <strong>Innova-T</strong>
+          <small>Student Space</small>
+        </span>
+      </a>
+
+      <nav class="sidebar-nav">
+        <a class="active" href="student-dashboard.html">Resumen</a>
+        <a href="#reservas">Reservas</a>
+        <a href="#clase-asignada">Clase asignada</a>
+        <a href="#temas">Temas</a>
+        <a href="#workshops">Workshops</a>
+        <a href="#calificaciones">Calificaciones</a>
+      </nav>
+
+      <div class="sidebar-card">
+        <span>Estado actual</span>
+        <strong>Intermediate B1</strong>
+        <small>Meta siguiente: B2 Conversation</small>
+      </div>
+    </aside>
+
+    <main class="dashboard-main">
+      <header class="dashboard-header">
+        <div>
+          <span class="eyebrow">Panel del estudiante</span>
+          <h1>Hola, Valentina</h1>
+          <p>Visualiza tus clases, temas cubiertos, asistencia y resultados academicos.</p>
+        </div>
+        <div class="header-actions">
+          <a class="btn btn-secondary" href="login.html">Cerrar demo</a>
+        </div>
+      </header>
+
+      <section class="dashboard-grid top-grid">
+        <article class="metric-card">
+          <span>Clases reservadas</span>
+          <strong>08</strong>
+          <small>2 para esta semana</small>
+        </article>
+        <article class="metric-card">
+          <span>Workshops completados</span>
+          <strong>12</strong>
+          <small>Ultimo: Interview Skills</small>
+        </article>
+        <article class="metric-card">
+          <span>Promedio general</span>
+          <strong>89/100</strong>
+          <small>Resultado sobresaliente</small>
+        </article>
+      </section>
+
+      <section id="reservas" class="dashboard-grid split-grid">
+        <article class="panel-card">
+          <div class="panel-head">
+            <h2>Reservar clase</h2>
+            <span class="tag">Demo visual</span>
+          </div>
+          <p>Selecciona el horario que mejor se adapte a tu agenda.</p>
+          <div class="slot-grid">
+            <button type="button" class="slot-btn selected">Lun 5:00 PM</button>
+            <button type="button" class="slot-btn">Mar 7:00 PM</button>
+            <button type="button" class="slot-btn">Mie 6:30 PM</button>
+            <button type="button" class="slot-btn">Vie 5:30 PM</button>
+          </div>
+        </article>
+
+        <article id="clase-asignada" class="panel-card highlight-card">
+          <div class="panel-head">
+            <h2>Clase asignada por el teacher</h2>
+            <span class="availability">Disponible en 10 min</span>
+          </div>
+          <div class="assigned-class">
+            <strong>Speaking Fluency Session</strong>
+            <p>Teacher Camila Rojas</p>
+            <small>Hoy, 6:00 PM - Sala 02</small>
+          </div>
+          <a class="btn btn-primary" href="#">Entrar a la clase</a>
+        </article>
+      </section>
+
+      <section id="temas" class="dashboard-grid split-grid">
+        <article class="panel-card">
+          <div class="panel-head">
+            <h2>Temas de tus clases</h2>
+          </div>
+          <div class="topic-list">
+            <div>
+              <strong>Present Perfect vs Past Simple</strong>
+              <span>Sesion 14</span>
+            </div>
+            <div>
+              <strong>Business introductions</strong>
+              <span>Sesion 15</span>
+            </div>
+            <div>
+              <strong>Pronunciation: ending sounds</strong>
+              <span>Sesion 16</span>
+            </div>
+          </div>
+        </article>
+
+        <article id="workshops" class="panel-card">
+          <div class="panel-head">
+            <h2>Workshops asistidos</h2>
+          </div>
+          <ul class="check-list">
+            <li class="done">Pronunciation Booster</li>
+            <li class="done">CV & Interview Lab</li>
+            <li class="done">Speaking Confidence Workshop</li>
+            <li>Business Email Writing</li>
+          </ul>
+        </article>
+      </section>
+
+      <section id="calificaciones" class="panel-card">
+        <div class="panel-head">
+          <h2>Calificaciones de examenes</h2>
+          <span class="tag">Estado academico</span>
+        </div>
+
+        <div class="grades-grid">
+          <article class="grade-card success">
+            <span>Examen escrito</span>
+            <strong>86/100</strong>
+            <small>Passed</small>
+          </article>
+          <article class="grade-card success">
+            <span>Examen oral</span>
+            <strong>91/100</strong>
+            <small>Passed</small>
+          </article>
+          <article class="grade-card neutral">
+            <span>Resultado final</span>
+            <strong>Aprobado</strong>
+            <small>Listo para siguiente nivel</small>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
