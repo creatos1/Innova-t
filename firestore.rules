@@ -1,0 +1,29 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /usuarios/{userId} {
+      allow read, write: if request.auth.uid == userId;
+    }
+    
+    match /estudiantes/{estudianteId} {
+      allow read: if request.auth != null;
+      allow write: if get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.rol == 'admin';
+    }
+    
+    match /clases/{claseId} {
+      allow read: if request.auth != null;
+      allow write: if get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.rol in ['admin', 'teacher'];
+    }
+    
+    match /asistencias/{asistenciaId} {
+      allow read: if request.auth != null;
+      allow write: if get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.rol in ['admin', 'teacher'];
+    }
+    
+    match /calificaciones/{calificacionId} {
+      allow read: if request.auth != null;
+      allow write: if get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.rol in ['admin', 'teacher'];
+    }
+  }
+}

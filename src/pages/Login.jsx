@@ -1,34 +1,44 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { signInWithEmailAndPassword } from 'firebase/auth'
+import { auth, db } from '../firebase'
+import { doc, getDoc } from 'firebase/firestore'
 
 function Login() {
-  const [role, setRole] = useState('student')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState('')
   const [messageType, setMessageType] = useState('')
+  const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
-
-    const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
-    const passwordValid = password.trim().length >= 6
-
+    setLoading(true)
     setMessageType('')
 
-    if (!emailValid || !passwordValid) {
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password)
+      const user = userCredential.user
+
+      const userDoc = await getDoc(doc(db, 'usuarios', user.uid))
+      if (userDoc.exists()) {
+        const userData = userDoc.data()
+        if (userData.rol === 'admin') {
+          navigate('/admin-dashboard')
+        } else {
+          navigate('/student-dashboard')
+        }
+      } else {
+        setMessageType('error')
+        setMessage('No se encontró el perfil de usuario.')
+      }
+    } catch (error) {
       setMessageType('error')
-      setMessage('Verifica el correo y usa una contrasena de al menos 6 caracteres.')
-      return
+      setMessage('Correo o contraseña incorrectos.')
+    } finally {
+      setLoading(false)
     }
-
-    setMessageType('success')
-    setMessage('Datos validados correctamente. Redirigiendo a la vista demo...')
-
-    setTimeout(() => {
-      navigate(role === 'admin' ? '/admin-dashboard' : '/student-dashboard')
-    }, 700)
   }
 
   return (
@@ -67,23 +77,6 @@ function Login() {
 
         <section className="auth-panel">
           <div className="auth-card">
-            <div className="tabs">
-              <button
-                className={`tab-btn ${role === 'student' ? 'active' : ''}`}
-                type="button"
-                onClick={() => setRole('student')}
-              >
-                Estudiante
-              </button>
-              <button
-                className={`tab-btn ${role === 'admin' ? 'active' : ''}`}
-                type="button"
-                onClick={() => setRole('admin')}
-              >
-                Admin / Teacher
-              </button>
-            </div>
-
             <div className="auth-card-header">
               <span className="eyebrow">Bienvenido</span>
               <h2>Inicia sesion</h2>
@@ -99,6 +92,7 @@ function Login() {
                 placeholder="estudiante@email.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                disabled={loading}
               />
 
               <label htmlFor="password">Contrasena</label>
@@ -109,12 +103,10 @@ function Login() {
                 placeholder="Minimo 6 caracteres"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                disabled={loading}
               />
 
               <div className="auth-meta">
-                <span className="role-badge">
-                  Rol actual: {role === 'admin' ? 'Admin / Teacher' : 'Estudiante'}
-                </span>
                 <Link to="/">Volver al inicio</Link>
               </div>
 
@@ -125,12 +117,10 @@ function Login() {
                 {message}
               </p>
 
-              <button className="btn btn-primary full-width" type="submit">
-                Entrar
+              <button className="btn btn-primary full-width" type="submit" disabled={loading}>
+                {loading ? 'Iniciando...' : 'Entrar'}
               </button>
             </form>
-
-
           </div>
         </section>
       </main>
