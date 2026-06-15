@@ -24,7 +24,7 @@ function Login() {
       const userDoc = await getDoc(doc(db, 'usuarios', user.uid))
       if (userDoc.exists()) {
         const userData = userDoc.data()
-        if (userData.rol === 'admin') {
+        if (userData.rol === 'admin' || userData.rol === 'teacher') {
           navigate('/admin-dashboard')
         } else {
           navigate('/student-dashboard')

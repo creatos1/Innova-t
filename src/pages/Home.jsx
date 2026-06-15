@@ -47,7 +47,7 @@ function Home() {
                 seguimiento real y una plataforma elegante para reservar, estudiar y avanzar.
               </p>
               <div className="hero-actions">
-                <Link className="btn btn-primary" to="/login">Ver acceso demo</Link>
+                <Link className="btn btn-primary" to="/login">Entrar a la plataforma</Link>
                 <a className="btn btn-secondary" href="#servicios">Explorar servicios</a>
               </div>
 
@@ -194,8 +194,8 @@ function Home() {
             </div>
             <div className="quote-card">
               <p>
-                "Una demo pensada para mostrar a clientes freelancer una academia moderna con paneles
-                claros, identidad visual fuerte y enfoque academico."
+                "Una plataforma pensada para operar una academia moderna con paneles claros,
+                identidad visual fuerte y seguimiento academico real."
               </p>
               <strong>Presentacion comercial</strong>
             </div>
@@ -224,7 +224,7 @@ function Home() {
           </div>
 
           <div>
-            <h3>Accesos demo</h3>
+            <h3>Accesos</h3>
             <Link to="/login">Login</Link>
             <Link to="/student-dashboard">Panel estudiante</Link>
             <Link to="/admin-dashboard">Panel admin</Link>

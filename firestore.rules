@@ -2,28 +2,91 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid));
+    }
+
+    function role() {
+      return signedIn() && userDoc().data.rol != null ? userDoc().data.rol : null;
+    }
+
+    function isAdmin() {
+      return role() == 'admin';
+    }
+
+    function isTeacher() {
+      return role() == 'teacher';
+    }
+
+    function isStaff() {
+      return isAdmin() || isTeacher();
+    }
+
+    function ownsStudent(studentId) {
+      return signedIn()
+        && get(/databases/$(database)/documents/estudiantes/$(studentId)).data.uid == request.auth.uid;
+    }
+
     match /usuarios/{userId} {
-      allow read, write: if request.auth.uid == userId;
+      allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow create, update: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow delete: if isAdmin();
     }
-    
-    match /estudiantes/{estudianteId} {
-      allow read: if request.auth != null;
-      allow write: if get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.rol == 'admin';
+
+    match /estudiantes/{studentId} {
+      allow read: if isStaff() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow create, update, delete: if isAdmin();
     }
-    
-    match /clases/{claseId} {
-      allow read: if request.auth != null;
-      allow write: if get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.rol in ['admin', 'teacher'];
+
+    match /niveles/{levelId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
     }
-    
-    match /asistencias/{asistenciaId} {
-      allow read: if request.auth != null;
-      allow write: if get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.rol in ['admin', 'teacher'];
+
+    match /lecciones/{lessonId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
     }
-    
-    match /calificaciones/{calificacionId} {
-      allow read: if request.auth != null;
-      allow write: if get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.rol in ['admin', 'teacher'];
+
+    match /clases/{classId} {
+      allow read: if signedIn();
+      allow write: if isStaff();
+    }
+
+    match /asistencias/{attendanceId} {
+      allow read: if isStaff() || ownsStudent(resource.data.studentId);
+      allow create: if isStaff();
+      allow update: if isStaff()
+        || (
+          ownsStudent(resource.data.studentId)
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['absenceNoticeAt', 'updatedAt'])
+        );
+      allow delete: if isAdmin();
+    }
+
+    match /pagos/{paymentId} {
+      allow read: if isStaff() || ownsStudent(resource.data.studentId);
+      allow write: if isAdmin();
+    }
+
+    match /calificaciones/{gradeId} {
+      allow read: if isStaff() || ownsStudent(resource.data.studentId);
+      allow write: if isStaff();
+    }
+
+    match /becaEventos/{eventId} {
+      allow read: if isStaff() || ownsStudent(resource.data.studentId);
+      allow write: if isAdmin();
+    }
+
+    match /aiRecommendations/{recommendationId} {
+      allow read: if isStaff() || ownsStudent(resource.data.studentId);
+      allow create, update: if isStaff();
+      allow delete: if isAdmin();
     }
   }
 }
