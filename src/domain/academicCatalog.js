@@ -162,7 +162,7 @@ export const LESSONS = ACADEMIC_LEVELS.flatMap(level =>
     levelId: level.id,
     order: index + 1,
     name,
-    estimatedHours: level.durationMonths === 1 ? 1.5 : 2,
+    estimatedHours: 1,
     activities: [
       'Warm-up',
       'Guided practice',

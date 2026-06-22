@@ -111,7 +111,7 @@ export function buildSuggestedGroups(students = [], recommendations = [], levels
     groups.get(key).students.push({
       id: student.id,
       name: student.fullName,
-      availability: student.availability,
+      availability: student.availability || [],
       nextLesson: recommendation?.nextLesson?.name || 'Evaluacion'
     })
   })

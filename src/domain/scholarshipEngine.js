@@ -1,21 +1,37 @@
 import { SCHOLARSHIP_RULES } from './academicCatalog'
 import { getWeekKey, hoursBetween, toDate } from './dateUtils'
 
-export function getLatestPayment(student, payments = []) {
+export function getLatestPayment(student, payments = [], now = new Date()) {
   const studentPayments = payments
     .filter(payment => payment.studentId === student.id)
     .sort((a, b) => toDate(b.dueDate) - toDate(a.dueDate))
 
   return studentPayments[0] || {
     studentId: student.id,
-    dueDate: student.paymentDueDate,
+    dueDate: student.paymentDueDate || getEnrollmentCycleDueDate(student, now),
     status: 'pendiente',
     paidAt: null
   }
 }
 
+function getEnrollmentCycleDueDate(student, now = new Date()) {
+  const enrollmentDate = toDate(student.enrollmentDate)
+  if (!enrollmentDate || Number.isNaN(enrollmentDate.getTime())) return null
+
+  const [, , dateOnlyDay] = typeof student.enrollmentDate === 'string'
+    ? student.enrollmentDate.split('-').map(Number)
+    : []
+  const day = dateOnlyDay || enrollmentDate.getDate()
+  const year = now.getFullYear()
+  const month = now.getMonth()
+  const lastDayOfMonth = new Date(year, month + 1, 0).getDate()
+  const dueDay = Math.min(day, lastDayOfMonth)
+
+  return `${year}-${String(month + 1).padStart(2, '0')}-${String(dueDay).padStart(2, '0')}`
+}
+
 export function evaluatePayment(student, payments = [], now = new Date()) {
-  const payment = getLatestPayment(student, payments)
+  const payment = getLatestPayment(student, payments, now)
   const dueDate = toDate(payment.dueDate || student.paymentDueDate)
   const isPaid = payment.status === 'pagado' || Boolean(payment.paidAt)
   const isOverdue = Boolean(dueDate && dueDate < now && !isPaid)

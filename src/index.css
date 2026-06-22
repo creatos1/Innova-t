@@ -1167,3 +1167,619 @@ p {
     grid-template-columns: 240px 1fr;
   }
 }
+
+.dashboard-body.admin-system {
+  min-height: 100vh;
+  background: #f4f6f8;
+  color: #18202b;
+}
+
+.admin-system h1,
+.admin-system h2,
+.admin-system h3 {
+  font-family: "Inter", sans-serif;
+  letter-spacing: 0;
+}
+
+.admin-system p {
+  color: #5d6776;
+  line-height: 1.55;
+}
+
+.admin-system .eyebrow,
+.admin-system .kicker,
+.admin-system .metric-card span {
+  color: #1f6feb;
+  letter-spacing: 0.08em;
+}
+
+.admin-system .brand-mark {
+  border-radius: 8px;
+  background: #18202b;
+  box-shadow: none;
+  font-family: "Inter", sans-serif;
+}
+
+.admin-sidebar {
+  background: #ffffff;
+  border-right: 1px solid #d9dee7;
+}
+
+.admin-system .sidebar-nav a {
+  border-radius: 8px;
+  color: #5d6776;
+}
+
+.admin-system .sidebar-nav a.active,
+.admin-system .sidebar-nav a:hover {
+  background: #eaf2ff;
+  color: #174ea6;
+}
+
+.admin-tabs-nav {
+  gap: 8px;
+}
+
+.admin-tabs-nav button {
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #5d6776;
+  font-weight: 700;
+  text-align: left;
+}
+
+.admin-tabs-nav button.active,
+.admin-tabs-nav button:hover {
+  background: #eaf2ff;
+  color: #174ea6;
+}
+
+.admin-main {
+  padding: 28px;
+}
+
+.admin-header {
+  padding: 0 0 20px;
+  border-bottom: 1px solid #d9dee7;
+}
+
+.admin-header h1 {
+  font-size: clamp(1.8rem, 2.4vw, 2.5rem);
+  margin-bottom: 8px;
+}
+
+.admin-system .btn {
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.admin-system .btn-primary {
+  background: #1f6feb;
+  color: #ffffff;
+}
+
+.admin-system .btn-primary:hover {
+  background: #174ea6;
+}
+
+.admin-system .btn-secondary {
+  background: #ffffff;
+  border-color: #ccd4df;
+  color: #253041;
+}
+
+.admin-system .btn-secondary:hover {
+  background: #f2f5f9;
+}
+
+.admin-system .panel-card,
+.admin-system .metric-card,
+.admin-system .sidebar-card,
+.admin-card {
+  background: #ffffff;
+  border: 1px solid #d9dee7;
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+.admin-metrics {
+  margin-top: 0;
+}
+
+.admin-system .metric-card {
+  padding: 18px;
+}
+
+.admin-system .metric-card strong {
+  color: #101828;
+  font-size: 1.8rem;
+}
+
+.admin-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+  gap: 18px;
+}
+
+.admin-active-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.admin-tab-grid {
+  display: grid;
+  gap: 18px;
+}
+
+.admin-two-pane {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 18px;
+}
+
+.admin-card-wide {
+  grid-column: 1 / -1;
+}
+
+.admin-section-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.admin-section-title h2 {
+  font-size: 1.15rem;
+  margin-bottom: 4px;
+}
+
+.admin-section-title p {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.admin-form-grid,
+.admin-form-stack,
+.inline-form,
+.attendance-form {
+  display: grid;
+  gap: 14px;
+}
+
+.admin-form-grid {
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  align-items: end;
+}
+
+.admin-form-stack {
+  grid-template-columns: 1fr;
+}
+
+.admin-system .form-field {
+  display: grid;
+  gap: 7px;
+  color: #344054;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.admin-system .form-field.span-2 {
+  grid-column: span 2;
+}
+
+.admin-system input,
+.admin-system select {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid #cfd6e2;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #101828;
+  outline: none;
+}
+
+.admin-system input:focus,
+.admin-system select:focus {
+  border-color: #1f6feb;
+  box-shadow: 0 0 0 3px rgba(31, 111, 235, 0.12);
+}
+
+.form-actions {
+  display: flex;
+  align-items: end;
+}
+
+.profile-form {
+  margin-top: 16px;
+}
+
+.form-wide-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-start;
+}
+
+.inline-form {
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-bottom: 14px;
+}
+
+.teacher-list {
+  display: grid;
+  gap: 10px;
+}
+
+.teacher-row {
+  display: grid;
+  grid-template-columns: 90px minmax(140px, 1fr) minmax(180px, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.record-list {
+  display: grid;
+  gap: 8px;
+}
+
+.record-button {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #d9dee7;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #253041;
+  text-align: left;
+}
+
+.record-button:hover,
+.record-button.active {
+  border-color: #1f6feb;
+  background: #f0f6ff;
+}
+
+.record-button span {
+  color: #667085;
+  font-size: 0.84rem;
+}
+
+.danger-btn {
+  color: #b42318 !important;
+}
+
+.attendance-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.38fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.class-selector-list {
+  display: grid;
+  gap: 8px;
+}
+
+.class-selector {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #d9dee7;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #253041;
+  text-align: left;
+}
+
+.class-selector:hover,
+.class-selector.active {
+  border-color: #1f6feb;
+  background: #f0f6ff;
+}
+
+.class-selector span {
+  color: #5d6776;
+  font-size: 0.84rem;
+}
+
+.attendance-check-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.compact-check-grid {
+  max-height: 360px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid #e4e8ef;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.attendance-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  padding: 10px;
+  border: 1px solid #d9dee7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.attendance-check input {
+  width: 18px;
+  min-height: 18px;
+  height: 18px;
+  padding: 0;
+}
+
+.attendance-check strong,
+.attendance-check small {
+  display: block;
+}
+
+.attendance-check small {
+  color: #667085;
+}
+
+.admin-system .table-row,
+.admin-system .list-row,
+.admin-system .student-card,
+.admin-system .recommendation-card,
+.admin-system .compact-facts div,
+.admin-system .rule-item {
+  background: #ffffff;
+  border-color: #d9dee7;
+}
+
+.admin-system .table-head {
+  background: #f2f5f9;
+  color: #475467;
+}
+
+.admin-system .chip {
+  background: #eaf2ff;
+  color: #174ea6;
+}
+
+.section-gap {
+  margin-top: 18px;
+}
+
+.catalog-row {
+  display: grid;
+  grid-template-columns: 90px minmax(160px, 1fr) minmax(140px, 0.7fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid #d9dee7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.catalog-row.lesson-row {
+  grid-template-columns: minmax(140px, 0.7fr) 70px minmax(220px, 1fr) 90px auto auto;
+}
+
+.excel-system {
+  background: #eef2f5;
+  font-size: 14px;
+}
+
+.excel-system .dashboard-main {
+  padding: 18px;
+}
+
+.excel-system .panel-card,
+.excel-system .metric-card,
+.excel-system .sidebar-card,
+.excel-system .student-card,
+.excel-system .recommendation-card,
+.excel-system .highlight-panel,
+.excel-system .list-row,
+.excel-system .table-row,
+.excel-system .compact-facts div,
+.excel-system .rule-item {
+  border-color: #b8c2cc;
+  border-radius: 2px;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.excel-system .panel-card,
+.excel-system .metric-card,
+.excel-system .auth-card {
+  padding: 16px;
+}
+
+.excel-system h1 {
+  font-size: 1.6rem;
+}
+
+.excel-system h2 {
+  font-size: 1rem;
+}
+
+.excel-system p,
+.excel-system small,
+.excel-system .list-row small,
+.excel-system .table-row small {
+  line-height: 1.35;
+}
+
+.excel-system .btn,
+.excel-system input,
+.excel-system select,
+.excel-system .status-badge,
+.excel-system .chip,
+.excel-system .record-button,
+.excel-system .class-selector,
+.excel-system .attendance-check {
+  border-radius: 2px;
+}
+
+.excel-system .form-field {
+  display: grid;
+  gap: 6px;
+  color: #344054;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.excel-system input,
+.excel-system select {
+  min-height: 34px;
+  padding: 6px 8px;
+}
+
+.excel-system .btn {
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
+.excel-system .admin-header {
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+}
+
+.excel-system .admin-section-title {
+  margin-bottom: 10px;
+}
+
+.excel-system .sidebar {
+  background: #f8fafc;
+}
+
+.excel-system .sidebar-nav,
+.excel-system .admin-tabs-nav {
+  gap: 4px;
+}
+
+.excel-system .sidebar-nav a,
+.excel-system .admin-tabs-nav button {
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+}
+
+.excel-system .sidebar-nav a.active,
+.excel-system .sidebar-nav a:hover,
+.excel-system .admin-tabs-nav button.active,
+.excel-system .admin-tabs-nav button:hover {
+  border-color: #9fb5c9;
+  background: #dceaf7;
+}
+
+.excel-table {
+  display: grid;
+  border: 1px solid #9fb5c9;
+  background: #ffffff;
+}
+
+.excel-row {
+  display: grid;
+  grid-template-columns: 150px 120px minmax(240px, 1fr) 90px 120px;
+  align-items: center;
+  min-height: 36px;
+}
+
+.excel-row > span {
+  min-height: 36px;
+  padding: 8px;
+  border-right: 1px solid #c9d3de;
+  border-bottom: 1px solid #c9d3de;
+}
+
+.excel-head > span {
+  background: #d9ead3;
+  color: #1f3b1f;
+  font-weight: 800;
+}
+
+.excel-button {
+  border: 0;
+  background: transparent;
+  color: #18202b;
+  text-align: left;
+}
+
+.excel-button:hover,
+.excel-button.active {
+  background: #fff2cc;
+}
+
+.excel-grid-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid #9fb5c9;
+  background: #ffffff;
+  font-size: 0.88rem;
+}
+
+.excel-grid-table th,
+.excel-grid-table td {
+  min-height: 34px;
+  padding: 8px;
+  border: 1px solid #c9d3de;
+  color: #18202b;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.excel-grid-table th {
+  background: #d9ead3;
+  color: #1f3b1f;
+  font-weight: 800;
+}
+
+.excel-grid-table tr:nth-child(even) td {
+  background: #f8fafc;
+}
+
+.table-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 1024px) {
+  .admin-workspace,
+  .admin-two-pane,
+  .attendance-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px), (orientation: portrait) and (max-width: 1024px) {
+  .admin-main {
+    padding: 18px;
+  }
+
+  .admin-form-grid,
+  .inline-form,
+  .teacher-row,
+  .catalog-row,
+  .catalog-row.lesson-row {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-system .form-field.span-2 {
+    grid-column: auto;
+  }
+
+  .admin-section-title {
+    flex-direction: column;
+  }
+}
