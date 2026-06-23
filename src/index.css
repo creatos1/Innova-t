@@ -571,6 +571,19 @@ p {
   flex-wrap: wrap;
 }
 
+.text-link-button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+  text-align: left;
+}
+
+.text-link-button:hover {
+  color: var(--gold-500);
+}
+
 .form-message {
   min-height: 24px;
   margin: 0;
@@ -1503,6 +1516,25 @@ p {
   background: #f8fafc;
 }
 
+.dropdown-checklist {
+  border: 1px solid #cfd6e2;
+  border-radius: 2px;
+  background: #ffffff;
+}
+
+.dropdown-checklist summary {
+  min-height: 34px;
+  padding: 8px 10px;
+  color: #253041;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.dropdown-checklist[open] summary {
+  border-bottom: 1px solid #d9dee7;
+  background: #f2f5f9;
+}
+
 .attendance-check {
   display: flex;
   align-items: center;
@@ -1528,6 +1560,54 @@ p {
 
 .attendance-check small {
   color: #667085;
+}
+
+.student-attendance-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+  padding: 8px;
+  border: 1px solid #c9d3de;
+  background: #f8fafc;
+}
+
+.student-attendance-row .attendance-check {
+  min-height: 40px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.student-progress-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #9fb5c9;
+  background: #ffffff;
+}
+
+.lesson-progress-group {
+  display: grid;
+  gap: 6px;
+}
+
+.progress-lesson-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 4px;
+}
+
+.lesson-check-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 7px;
+  border: 1px solid #d8e1ea;
+  background: #ffffff;
+  font-size: 0.82rem;
 }
 
 .admin-system .table-row,
@@ -1686,7 +1766,7 @@ p {
 
 .excel-row {
   display: grid;
-  grid-template-columns: 150px 120px minmax(240px, 1fr) 90px 120px;
+  grid-template-columns: 150px 110px minmax(220px, 1fr) 80px 70px 120px;
   align-items: center;
   min-height: 36px;
 }
@@ -1750,6 +1830,22 @@ p {
   flex-wrap: wrap;
 }
 
+.inline-subrows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+}
+
+.inline-subrows small {
+  color: #415466;
+}
+
+.stacked-actions {
+  align-items: stretch;
+  flex-direction: column;
+}
+
 @media (max-width: 1024px) {
   .admin-workspace,
   .admin-two-pane,
@@ -1781,5 +1877,214 @@ p {
 
   .admin-section-title {
     flex-direction: column;
+  }
+}
+
+@media (max-width: 1180px) {
+  .excel-system .dashboard-shell {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  .dashboard-main .top-grid,
+  .compact-facts.four-columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-workspace,
+  .admin-two-pane,
+  .attendance-layout,
+  .ai-workbench {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .auth-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-showcase {
+    display: none;
+  }
+
+  .auth-panel {
+    min-height: 100vh;
+    padding: 24px;
+  }
+
+  .excel-system .dashboard-shell {
+    display: block;
+  }
+
+  .excel-system .sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 15;
+    padding: 12px;
+    border-right: 0;
+    border-bottom: 1px solid #d9dee7;
+    background: #ffffff;
+  }
+
+  .excel-system .brand {
+    margin-bottom: 10px;
+  }
+
+  .excel-system .sidebar-card {
+    display: none;
+  }
+
+  .excel-system .sidebar-nav,
+  .excel-system .admin-tabs-nav {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    margin: 0;
+  }
+
+  .excel-system .admin-tabs-nav button,
+  .excel-system .sidebar-nav a {
+    justify-content: center;
+    text-align: center;
+    white-space: normal;
+  }
+
+  .excel-system .admin-main,
+  .excel-system .dashboard-main {
+    padding: 14px;
+  }
+
+  .dashboard-header,
+  .header-actions,
+  .admin-section-title,
+  .panel-head,
+  .list-row,
+  .student-card-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .header-actions,
+  .header-actions .btn,
+  .form-actions,
+  .form-actions .btn,
+  .form-wide-actions .btn,
+  .table-actions .btn {
+    width: 100%;
+  }
+
+  .admin-form-grid,
+  .compact-facts.two-columns,
+  .compact-facts.four-columns,
+  .dashboard-main .top-grid,
+  .split-grid,
+  .grades-grid,
+  .slot-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .teacher-row,
+  .catalog-row,
+  .catalog-row.lesson-row,
+  .inline-form {
+    grid-template-columns: 1fr;
+  }
+
+  .excel-system .panel-card,
+  .excel-system .admin-card {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .excel-table,
+  .data-table {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .excel-grid-table {
+    display: table;
+    width: max-content;
+    min-width: 680px;
+  }
+
+  .excel-row {
+    min-width: 760px;
+  }
+}
+
+@media (max-width: 560px) {
+  .container {
+    width: min(100% - 24px, 1120px);
+  }
+
+  .auth-panel,
+  .auth-showcase {
+    padding: 16px;
+  }
+
+  .auth-card,
+  .excel-system .panel-card,
+  .excel-system .metric-card,
+  .excel-system .auth-card {
+    padding: 12px;
+  }
+
+  .excel-system .admin-header h1,
+  .excel-system h1 {
+    font-size: 1.25rem;
+    line-height: 1.2;
+  }
+
+  .excel-system .admin-header {
+    gap: 10px;
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+  }
+
+  .excel-system .sidebar {
+    padding: 10px;
+  }
+
+  .excel-system .brand-mark {
+    width: 36px;
+    height: 36px;
+  }
+
+  .excel-system .brand strong {
+    font-size: 0.9rem;
+  }
+
+  .excel-system .brand small {
+    font-size: 0.72rem;
+  }
+
+  .excel-system .sidebar-nav,
+  .excel-system .admin-tabs-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .excel-system .admin-tabs-nav button,
+  .excel-system .sidebar-nav a {
+    min-height: 38px;
+    padding: 7px;
+    font-size: 0.78rem;
+  }
+
+  .excel-system input,
+  .excel-system select,
+  .excel-system .btn {
+    min-height: 40px;
+  }
+
+  .attendance-check-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .system-message {
+    font-size: 0.86rem;
   }
 }

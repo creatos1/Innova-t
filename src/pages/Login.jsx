@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth'
+import { createUserWithEmailAndPassword, sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from 'firebase/auth'
 import {
   collection,
   doc,
@@ -71,6 +71,12 @@ function Login() {
   const [messageType, setMessageType] = useState('')
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
+
+  useEffect(() => {
+    if (auth.currentUser) {
+      signOut(auth).catch(error => console.warn('No se pudo limpiar sesion previa.', error))
+    }
+  }, [])
 
   const resolveLoginRecord = async (value) => {
     const cleanValue = value.trim()
@@ -212,16 +218,22 @@ function Login() {
     setMessageType('')
 
     try {
+      if (auth.currentUser) {
+        await signOut(auth)
+      }
+
       const loginRecord = await resolveLoginRecord(loginId)
       const userCredential = await getCredential(loginRecord)
       const user = userCredential.user
       const userDoc = await getDoc(doc(db, 'usuarios', user.uid))
 
-      if (!userDoc.exists()) {
+      if (!userDoc.exists() || !userDoc.data()?.rol) {
         await writeFirstLoginProfile(user, loginRecord)
       }
 
-      const refreshedUserDoc = userDoc.exists() ? userDoc : await getDoc(doc(db, 'usuarios', user.uid))
+      const refreshedUserDoc = userDoc.exists() && userDoc.data()?.rol
+        ? userDoc
+        : await getDoc(doc(db, 'usuarios', user.uid))
       if (!refreshedUserDoc.exists()) {
         setMessageType('error')
         setMessage('El usuario existe en Firebase Auth, pero falta su perfil en usuarios/{uid}. Entra con ID publico o pide al admin vincularlo.')
@@ -238,6 +250,36 @@ function Login() {
       }
     } catch (error) {
       console.error('Firebase login error:', error.code, error.message)
+      setMessageType('error')
+      setMessage(error.code ? getLoginErrorMessage(error) : error.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handlePasswordReset = async () => {
+    setLoading(true)
+    setMessage('')
+    setMessageType('')
+
+    try {
+      if (!loginId.trim()) {
+        setMessageType('error')
+        setMessage('Escribe tu correo, ID de alumno o ID de teacher para enviar el restablecimiento.')
+        return
+      }
+
+      const loginRecord = await resolveLoginRecord(loginId)
+      if (!loginRecord.email) {
+        setMessageType('error')
+        setMessage('No encontramos un correo vinculado a ese usuario.')
+        return
+      }
+
+      await sendPasswordResetEmail(auth, loginRecord.email)
+      setMessageType('success')
+      setMessage(`Enviamos un correo de restablecimiento a ${loginRecord.email}.`)
+    } catch (error) {
       setMessageType('error')
       setMessage(error.code ? getLoginErrorMessage(error) : error.message)
     } finally {
@@ -316,6 +358,9 @@ function Login() {
 
               <div className="auth-meta">
                 <Link to="/">Volver al inicio</Link>
+                <button className="text-link-button" type="button" onClick={handlePasswordReset} disabled={loading}>
+                  Restablecer contrasena
+                </button>
               </div>
 
               <p className={`form-message ${messageType}`} aria-live="polite">

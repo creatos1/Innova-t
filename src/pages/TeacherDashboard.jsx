@@ -2,12 +2,38 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { updatePassword } from 'firebase/auth'
 import StatusBadge from '../components/StatusBadge'
-import { getLesson, getLevel } from '../domain/academicCatalog'
+import { getLesson, getLessonsByLevel, getLevel } from '../domain/academicCatalog'
 import { formatDateTime, toDate } from '../domain/dateUtils'
 import { useInstituteData } from '../services/useInstituteData'
 
 function sortByName(items = []) {
   return [...items].sort((a, b) => (a.fullName || '').localeCompare(b.fullName || '', 'es'))
+}
+
+function getEffectiveClassStatus(classItem) {
+  if (classItem.status === 'cancelada') return 'cancelada'
+  const endAt = toDate(classItem.endAt)
+  return endAt && endAt < new Date() ? 'completada' : 'programada'
+}
+
+function getClassDurationHours(classItem) {
+  const hours = Number(classItem?.durationHours || 1)
+  return Number.isFinite(hours) ? Math.max(1, hours) : 1
+}
+
+function getTakenLessonIds(studentId, classes = [], attendance = []) {
+  const attendedClassIds = new Set(
+    attendance
+      .filter(record => record.studentId === studentId && record.attended === true)
+      .map(record => record.classId)
+  )
+
+  return new Set(
+    classes
+      .filter(classItem => attendedClassIds.has(classItem.id))
+      .flatMap(classItem => classItem.lessonIds || [])
+      .filter(Boolean)
+  )
 }
 
 function TeacherDashboard() {
@@ -24,6 +50,7 @@ function TeacherDashboard() {
   } = useInstituteData()
   const [selectedClassId, setSelectedClassId] = useState('')
   const [attendanceChecked, setAttendanceChecked] = useState({})
+  const [progressStudentId, setProgressStudentId] = useState('')
   const [gradeForm, setGradeForm] = useState({
     studentId: '',
     levelId: '',
@@ -38,6 +65,7 @@ function TeacherDashboard() {
   const teacherProfile = data.teachers.find(teacher => teacher.id === teacherId)
   const teacherClasses = useMemo(() => (
     data.classes
+      .filter(classItem => classItem.teacherId || classItem.teacherName)
       .filter(classItem => profile?.rol === 'admin' || !teacherId || classItem.teacherId === teacherId || classItem.teacherName === profile?.nombre)
       .sort((a, b) => (toDate(a.startAt)?.getTime() || 0) - (toDate(b.startAt)?.getTime() || 0))
   ), [data.classes, profile, teacherId])
@@ -56,6 +84,9 @@ function TeacherDashboard() {
     const ids = new Set(teacherClasses.flatMap(classItem => classItem.studentIds || []))
     return sortByName(data.students.filter(student => ids.has(student.id)))
   }, [data.students, teacherClasses])
+  const sortedLevels = useMemo(() => (
+    [...data.levels].sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
+  ), [data.levels])
 
   useEffect(() => {
     if (!selectedClassId && teacherClasses[0]?.id) {
@@ -66,6 +97,7 @@ function TeacherDashboard() {
   useEffect(() => {
     if (!selectedClass) {
       setAttendanceChecked({})
+      setProgressStudentId('')
       return
     }
 
@@ -76,6 +108,10 @@ function TeacherDashboard() {
       }), {})
     )
   }, [attendanceByStudentId, classStudents, selectedClass])
+
+  useEffect(() => {
+    setProgressStudentId('')
+  }, [selectedClass?.id])
 
   useEffect(() => {
     if (!gradeForm.studentId && teacherStudents[0]?.id) {
@@ -215,6 +251,7 @@ function TeacherDashboard() {
                 <span>Nivel</span>
                 <span>Leccion</span>
                 <span>Alumnos</span>
+                <span>Horas</span>
                 <span>Estatus</span>
               </div>
               {teacherClasses.map(classItem => {
@@ -225,7 +262,8 @@ function TeacherDashboard() {
                     <span>{getLevel(classItem.levelId || lesson?.levelId, data.levels)?.shortName || '-'}</span>
                     <span>{lesson?.name || '-'}</span>
                     <span>{classItem.studentIds?.length || 0}</span>
-                    <span>{classItem.status || 'programada'}</span>
+                    <span>{getClassDurationHours(classItem)}</span>
+                    <span>{getEffectiveClassStatus(classItem)}</span>
                   </button>
                 )
               })}
@@ -235,22 +273,48 @@ function TeacherDashboard() {
           <section id="asistencia" className="panel-card admin-card">
             <div className="admin-section-title">
               <div>
-                <h2>Tomar asistencia</h2>
-                <p>{selectedClass ? getLesson(selectedClass.lessonIds?.[0], data.lessons)?.name : 'Selecciona una clase'}.</p>
+                <h2>Reservaciones por alumno</h2>
+                <p>{selectedClass ? `${getLesson(selectedClass.lessonIds?.[0], data.lessons)?.name || 'Clase'} - toma asistencia y revisa progreso` : 'Selecciona una clase'}.</p>
               </div>
               {selectedClass && <StatusBadge severity="info">{formatDateTime(selectedClass.startAt)}</StatusBadge>}
             </div>
             <form className="attendance-form" onSubmit={submitAttendance}>
               <div className="attendance-check-grid">
-                {classStudents.map(student => (
-                  <label className="attendance-check" key={student.id}>
-                    <input type="checkbox" checked={attendanceChecked[student.id] === true} onChange={event => setAttendanceChecked(prev => ({ ...prev, [student.id]: event.target.checked }))} />
-                    <span>
-                      <strong>{student.fullName}</strong>
-                      <small>{student.publicId}</small>
-                    </span>
-                  </label>
-                ))}
+                {classStudents.map(student => {
+                  const takenLessonIds = getTakenLessonIds(student.id, data.classes, data.attendance)
+                  const showProgress = progressStudentId === student.id
+                  return (
+                    <div className="student-attendance-row" key={student.id}>
+                      <label className="attendance-check">
+                        <input type="checkbox" checked={attendanceChecked[student.id] === true} onChange={event => setAttendanceChecked(prev => ({ ...prev, [student.id]: event.target.checked }))} />
+                        <span>
+                          <strong>{student.fullName}</strong>
+                          <small>{student.publicId} - {getLevel(student.currentLevelId, data.levels)?.shortName || 'Sin nivel'}</small>
+                        </span>
+                      </label>
+                      <button className="btn btn-secondary small-btn" type="button" onClick={() => setProgressStudentId(showProgress ? '' : student.id)}>
+                        {showProgress ? 'Ocultar progreso' : 'Ver progreso'}
+                      </button>
+                      {showProgress && (
+                        <div className="student-progress-panel">
+                          {sortedLevels.map(level => (
+                            <div className="lesson-progress-group" key={level.id}>
+                              <strong>{level.shortName || level.name}</strong>
+                              <div className="progress-lesson-grid">
+                                {getLessonsByLevel(level.id, data.lessons).map(lesson => (
+                                  <label className="lesson-check-row" key={lesson.id}>
+                                    <input type="checkbox" checked={takenLessonIds.has(lesson.id)} readOnly />
+                                    <span>{lesson.order}. {lesson.name}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
                 {!classStudents.length && <p className="empty-state">La clase seleccionada no tiene alumnos asignados.</p>}
               </div>
               <button className="btn btn-primary small-btn" type="submit" disabled={saving || !classStudents.length}>Confirmar lista</button>

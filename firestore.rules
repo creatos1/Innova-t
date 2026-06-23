@@ -30,15 +30,75 @@ service cloud.firestore {
       return isAdmin() || isTeacher();
     }
 
-    function ownsStudent(studentId) {
+    function profileOwnsStudent(studentId) {
       return signedIn()
-        && get(/databases/$(database)/documents/estudiantes/$(studentId)).data.uid == request.auth.uid;
+        && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid))
+        && userDoc().data.studentId == studentId;
     }
 
-    function signedInStudent(studentId) {
+    function studentEmailMatchesAuth(studentId) {
       return signedIn()
         && exists(/databases/$(database)/documents/estudiantes/$(studentId))
-        && get(/databases/$(database)/documents/estudiantes/$(studentId)).data.uid == request.auth.uid;
+        && get(/databases/$(database)/documents/estudiantes/$(studentId)).data.email == request.auth.token.email;
+    }
+
+    function ownsStudent(studentId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/estudiantes/$(studentId))
+        && (
+          get(/databases/$(database)/documents/estudiantes/$(studentId)).data.uid == request.auth.uid
+          || profileOwnsStudent(studentId)
+          || studentEmailMatchesAuth(studentId)
+        );
+    }
+
+    function currentStudentId() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid))
+        && userDoc().data.studentId is string
+        ? userDoc().data.studentId
+        : '';
+    }
+
+    function isStudentAutoClassCreate() {
+      return signedIn()
+        && request.resource.data.reservationSource == 'student-auto'
+        && request.resource.data.status == 'pendiente_asignacion'
+        && request.resource.data.teacherId == ''
+        && request.resource.data.teacherName == ''
+        && request.resource.data.durationHours == 1
+        && request.resource.data.reservationBlockHours >= 1
+        && request.resource.data.reservationBlockHours <= 3
+        && request.resource.data.studentIds.size() == 1
+        && ownsStudent(request.resource.data.studentIds[0]);
+    }
+
+    function isStudentClassRosterAdd() {
+      let studentId = currentStudentId();
+      return studentId != ''
+        && ownsStudent(studentId)
+        && resource.data.reservationSource == 'student-auto'
+        && resource.data.status == 'pendiente_asignacion'
+        && resource.data.teacherId == ''
+        && request.resource.data.teacherId == ''
+        && request.resource.data.teacherName == ''
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly(['studentIds', 'updatedAt'])
+        && !resource.data.studentIds.hasAny([studentId])
+        && request.resource.data.studentIds.hasAny([studentId])
+        && request.resource.data.studentIds.hasAll(resource.data.studentIds)
+        && request.resource.data.studentIds.size() == resource.data.studentIds.size() + 1
+        && request.resource.data.studentIds.size() <= 8;
+    }
+
+    function isStudentClassRosterRemove() {
+      let studentId = currentStudentId();
+      return studentId != ''
+        && ownsStudent(studentId)
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly(['studentIds', 'updatedAt'])
+        && resource.data.studentIds.hasAny([studentId])
+        && !request.resource.data.studentIds.hasAny([studentId])
+        && resource.data.studentIds.hasAll(request.resource.data.studentIds)
+        && resource.data.studentIds.size() == request.resource.data.studentIds.size() + 1;
     }
 
     function isBootstrapAdmin(userId) {
@@ -67,13 +127,13 @@ service cloud.firestore {
     }
 
     function isLimitedLoginLookup() {
-      return !signedIn() && request.query.limit != null && request.query.limit <= 1;
+      return request.query.limit != null && request.query.limit <= 1;
     }
 
     function isStudentUidClaim() {
       return signedIn()
         && resource.data.email == request.auth.token.email
-        && (resource.data.uid == null || resource.data.uid == '')
+        && (resource.data.uid == null || resource.data.uid == '' || resource.data.uid == request.auth.uid)
         && request.resource.data.diff(resource.data).changedKeys().hasOnly(['uid', 'updatedAt'])
         && request.resource.data.uid == request.auth.uid;
     }
@@ -81,7 +141,7 @@ service cloud.firestore {
     function isTeacherUidClaim() {
       return signedIn()
         && resource.data.email == request.auth.token.email
-        && (resource.data.uid == null || resource.data.uid == '')
+        && (resource.data.uid == null || resource.data.uid == '' || resource.data.uid == request.auth.uid)
         && request.resource.data.diff(resource.data).changedKeys().hasOnly(['uid', 'updatedAt'])
         && request.resource.data.uid == request.auth.uid;
     }
@@ -112,7 +172,9 @@ service cloud.firestore {
         || isBootstrapAdmin(userId)
         || isStudentFirstLoginUser(userId)
         || isTeacherFirstLoginUser(userId);
-      allow update: if isAdmin();
+      allow update: if isAdmin()
+        || isStudentFirstLoginUser(userId)
+        || isTeacherFirstLoginUser(userId);
       allow delete: if isAdmin();
     }
 
@@ -128,7 +190,7 @@ service cloud.firestore {
     }
 
     match /estudiantes/{studentId} {
-      allow get: if isStaff() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow get: if isStaff() || ownsStudent(studentId);
       allow list: if isStaff() || isLimitedLoginLookup();
       allow create, delete: if isAdmin();
       allow update: if isAdmin() || isStudentUidClaim();
@@ -151,21 +213,16 @@ service cloud.firestore {
       allow update: if isAdmin() || isTeacherUidClaim();
     }
 
+    match /bloqueos/{blockoutId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
     match /clases/{classId} {
       allow read: if signedIn();
-      allow create: if isStaff()
-        || (
-          signedIn()
-          && request.resource.data.reservationSource == 'student-auto'
-          && request.resource.data.studentIds.size() == 1
-          && signedInStudent(request.resource.data.studentIds[0])
-        );
-      allow delete: if isStaff();
-      allow update: if isStaff()
-        || (
-          signedIn()
-          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['studentIds', 'updatedAt'])
-        );
+      allow create: if isAdmin() || isStudentAutoClassCreate();
+      allow delete: if isAdmin();
+      allow update: if isAdmin() || isStudentClassRosterAdd() || isStudentClassRosterRemove();
     }
 
     match /asistencias/{attendanceId} {

@@ -4,6 +4,7 @@ import {
   createAttendanceRecord,
   createAttendanceRecords,
   createClassRecord,
+  createBlockoutRecord,
   createLevelRecord,
   createLessonRecord,
   createPaymentRecord,
@@ -11,6 +12,7 @@ import {
   createTeacherRecord,
   cancelStudentReservationRecord,
   deleteClassRecord,
+  deleteBlockoutRecord,
   deleteLevelRecord,
   deleteLessonRecord,
   deletePaymentRecord,
@@ -64,7 +66,7 @@ export function useInstituteData() {
         const permissionDenied = error.code === 'permission-denied'
           || (error.message || '').toLowerCase().includes('insufficient permissions')
         setMessage(permissionDenied
-          ? 'Firebase rechazo permisos. Publica firestore.rules actualizado y confirma que tu usuario tenga rol admin o teacher.'
+          ? 'Firebase rechazo permisos. Publica firestore.rules actualizado y confirma que el usuario tenga su rol o studentId vinculado.'
           : error.message || 'Firebase rechazo una lectura. Revisa reglas y rol del usuario.')
         setLoading(false)
       }
@@ -84,7 +86,11 @@ export function useInstituteData() {
       setMessage(successMessage)
     } catch (error) {
       console.warn(error)
-      setMessage(error.message || 'Firebase rechazo la escritura. Revisa permisos y datos.')
+      const permissionDenied = error.code === 'permission-denied'
+        || (error.message || '').toLowerCase().includes('insufficient permissions')
+      setMessage(permissionDenied
+        ? 'Firebase rechazo permisos al guardar. Publica firestore.rules actualizado y revisa que el alumno tenga studentId vinculado.'
+        : error.message || 'Firebase rechazo la escritura. Revisa permisos y datos.')
     } finally {
       setSaving(false)
     }
@@ -149,6 +155,20 @@ export function useInstituteData() {
     )
   }
 
+  async function createBlockout(payload) {
+    await runWrite(
+      () => createBlockoutRecord(payload),
+      'Bloqueo de horario guardado en Firestore.'
+    )
+  }
+
+  async function deleteBlockout(blockoutId) {
+    await runWrite(
+      () => deleteBlockoutRecord(blockoutId),
+      'Bloqueo de horario eliminado.'
+    )
+  }
+
   async function updateClassRoster(classId, studentIds) {
     await runWrite(
       () => updateClassRosterRecord(classId, studentIds),
@@ -159,7 +179,7 @@ export function useInstituteData() {
   async function reserveStudentClass(assignment) {
     await runWrite(
       () => reserveStudentClassRecord(assignment),
-      'Clase reservada. El sistema acomodo nivel, leccion y teacher automaticamente.'
+      'Reserva guardada. Admin formara las clases y asignara teacher.'
     )
   }
 
@@ -315,6 +335,8 @@ export function useInstituteData() {
     createClass,
     updateClass,
     deleteClass,
+    createBlockout,
+    deleteBlockout,
     updateClassRoster,
     reserveStudentClass,
     cancelStudentReservation,

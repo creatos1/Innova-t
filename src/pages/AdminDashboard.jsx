@@ -11,18 +11,20 @@ import {
   getClassDateValue,
   getClassTimeValue,
   getMexicoDateInput,
-  getScheduleHoursForDate
+  getScheduleHoursForDate,
+  isSlotBlocked
 } from '../domain/scheduleMatcher'
+import { generateClassFormationSuggestions } from '../services/aiAdvisor'
 import { createAuthUser } from '../services/authProvisioning'
 import { useInstituteData } from '../services/useInstituteData'
 
 const TABS = [
-  { id: 'students', label: 'CRUD Estudiantes' },
-  { id: 'teachers', label: 'CRUD Teachers' },
-  { id: 'payments', label: 'Pagos' },
-  { id: 'classes', label: 'Clases' },
-  { id: 'attendance', label: 'Asistencias' },
-  { id: 'catalog', label: 'Lecciones/Niveles' }
+  { id: 'students', label: 'ESTUDIANTES' },
+  { id: 'teachers', label: 'TEACHERS' },
+  { id: 'payments', label: 'PAGOS' },
+  { id: 'classes', label: 'CLASES' },
+  { id: 'attendance', label: 'ASISTENCIAS' },
+  { id: 'catalog', label: 'LECCIONES' }
 ]
 
 function buildDateInput(year, monthIndex, day) {
@@ -63,6 +65,10 @@ function sortByName(items = []) {
   return [...items].sort((a, b) => (a.fullName || a.name || '').localeCompare(b.fullName || b.name || '', 'es'))
 }
 
+function uniqueValues(values = []) {
+  return Array.from(new Set(values.filter(Boolean)))
+}
+
 function nextTeacherPublicId(teachers = []) {
   const maxNumber = teachers.reduce((max, teacher) => {
     const match = String(teacher.publicId || '').match(/^T-(\d+)$/i)
@@ -70,6 +76,67 @@ function nextTeacherPublicId(teachers = []) {
   }, 0)
 
   return `T-${String(maxNumber + 1).padStart(3, '0')}`
+}
+
+function getClassDurationHours(classItem) {
+  const hours = Number(classItem?.durationHours || 1)
+  return Number.isFinite(hours) ? Math.max(1, hours) : 1
+}
+
+function formatClassHours(classItem) {
+  const hours = getClassDurationHours(classItem)
+  return `${hours} ${hours === 1 ? 'hora' : 'horas'}`
+}
+
+function buildPendingSlotGroups(classes = [], students = []) {
+  const studentsById = new Map(students.map(student => [student.id, student]))
+  const groups = new Map()
+
+  classes.forEach(classItem => {
+    const date = classItem.date || getClassDateValue(classItem.startAt)
+    const time = classItem.time || getClassTimeValue(classItem.startAt)
+    const key = `${date}__${time}`
+    const current = groups.get(key) || {
+      id: key,
+      date,
+      time,
+      startAt: classItem.startAt,
+      classes: [],
+      studentIds: []
+    }
+
+    current.classes.push(classItem)
+    ;(classItem.studentIds || []).forEach(studentId => {
+      if (!current.studentIds.includes(studentId)) current.studentIds.push(studentId)
+    })
+    groups.set(key, current)
+  })
+
+  return Array.from(groups.values())
+    .flatMap(group => {
+      const chunks = []
+      for (let index = 0; index < group.studentIds.length; index += 8) {
+        const studentIds = group.studentIds.slice(index, index + 8)
+        const selected = new Set(studentIds)
+        const sourceClasses = group.classes.filter(classItem => {
+          const ids = classItem.studentIds || []
+          return ids.length && ids.every(studentId => selected.has(studentId))
+        })
+        if (!sourceClasses.length) continue
+
+        chunks.push({
+          ...group,
+          id: `${group.id}__${Math.floor(index / 8) + 1}`,
+          chunkIndex: Math.floor(index / 8) + 1,
+          classes: sourceClasses,
+          sourceClassIds: sourceClasses.map(classItem => classItem.id),
+          studentIds,
+          students: studentIds.map(studentId => studentsById.get(studentId)).filter(Boolean)
+        })
+      }
+      return chunks.filter(Boolean)
+    })
+    .sort((a, b) => (toDate(a.startAt)?.getTime() || 0) - (toDate(b.startAt)?.getTime() || 0))
 }
 
 function emptyStudentForm(today) {
@@ -116,6 +183,7 @@ function AdminDashboard() {
     message,
     setMessage,
     createBulkAttendance,
+    createBlockout,
     createClass,
     createLesson,
     createLevel,
@@ -123,6 +191,7 @@ function AdminDashboard() {
     createStudent,
     createTeacher,
     deleteClass,
+    deleteBlockout,
     deleteLesson,
     deleteLevel,
     deletePayment,
@@ -147,14 +216,24 @@ function AdminDashboard() {
   const [teacherForm, setTeacherForm] = useState({ publicId: '', name: '', email: '', password: '' })
   const [teacherDrafts, setTeacherDrafts] = useState({})
   const [editingClassId, setEditingClassId] = useState('')
+  const [mergeSourceClassIds, setMergeSourceClassIds] = useState([])
+  const [aiClassPlan, setAiClassPlan] = useState(null)
+  const [aiClassLoading, setAiClassLoading] = useState(false)
   const [classForm, setClassForm] = useState({
     lessonId: '',
     teacherId: '',
     date: todayMexico,
     time: '08:00',
+    durationHours: 1,
     status: 'programada'
   })
   const [classStudentIds, setClassStudentIds] = useState([])
+  const [blockoutForm, setBlockoutForm] = useState({
+    date: todayMexico,
+    time: '',
+    allDay: true,
+    reason: ''
+  })
   const [selectedAttendanceClassId, setSelectedAttendanceClassId] = useState('')
   const [attendanceChecked, setAttendanceChecked] = useState({})
   const [paymentForm, setPaymentForm] = useState({
@@ -203,6 +282,15 @@ function AdminDashboard() {
   const classesByRecentDate = useMemo(() => (
     [...data.classes].sort((a, b) => (toDate(b.startAt)?.getTime() || 0) - (toDate(a.startAt)?.getTime() || 0))
   ), [data.classes])
+  const pendingAssignmentClasses = useMemo(() => (
+    classesByRecentDate.filter(classItem => (
+      classItem.status === 'pendiente_asignacion'
+      || (classItem.reservationSource === 'student-auto' && !classItem.teacherId)
+    ))
+  ), [classesByRecentDate])
+  const pendingAssignmentSlotGroups = useMemo(() => (
+    buildPendingSlotGroups(pendingAssignmentClasses, sortedStudents)
+  ), [pendingAssignmentClasses, sortedStudents])
   const selectedAttendanceClass = useMemo(() => (
     classesByRecentDate.find(classItem => classItem.id === selectedAttendanceClassId)
   ), [classesByRecentDate, selectedAttendanceClassId])
@@ -239,7 +327,21 @@ function AdminDashboard() {
   ), [studentDraft.currentLevelId, data.lessons])
   const classLesson = getLesson(classForm.lessonId, data.lessons)
   const classLevel = getLevel(classLesson?.levelId, data.levels)
-  const classTimeOptions = useMemo(() => getScheduleHoursForDate(classForm.date), [classForm.date])
+  const classTimeOptions = useMemo(() => (
+    getScheduleHoursForDate(classForm.date)
+      .filter(time => !isSlotBlocked(data.blockouts, classForm.date, time))
+  ), [classForm.date, data.blockouts])
+  const blockoutTimeOptions = useMemo(() => getScheduleHoursForDate(blockoutForm.date), [blockoutForm.date])
+  const sortedBlockouts = useMemo(() => (
+    [...data.blockouts].sort((a, b) => `${b.date}${b.time || ''}`.localeCompare(`${a.date}${a.time || ''}`))
+  ), [data.blockouts])
+
+  const getEffectiveClassStatus = (classItem) => {
+    if (classItem.status === 'cancelada') return 'cancelada'
+    if (classItem.status === 'pendiente_asignacion' || !classItem.teacherId) return 'pendiente_asignacion'
+    const endAt = toDate(classItem.endAt)
+    return endAt && endAt < new Date() ? 'completada' : 'programada'
+  }
 
   useEffect(() => {
     if (!selectedStudentId && sortedStudents[0]?.id) {
@@ -341,7 +443,8 @@ function AdminDashboard() {
 
   const resetClassForm = () => {
     setEditingClassId('')
-    setClassForm({ lessonId: '', teacherId: '', date: todayMexico, time: '08:00', status: 'programada' })
+    setMergeSourceClassIds([])
+    setClassForm({ lessonId: '', teacherId: '', date: todayMexico, time: '08:00', durationHours: 1, status: 'programada' })
     setClassStudentIds([])
   }
 
@@ -391,6 +494,10 @@ function AdminDashboard() {
     setClassStudentIds(prev => {
       if (!checked) return prev.filter(id => id !== studentId)
       if (prev.includes(studentId)) return prev
+      if (prev.length >= 8) {
+        setMessage('Maximo 8 estudiantes por clase.')
+        return prev
+      }
       return [...prev, studentId]
     })
   }
@@ -399,6 +506,7 @@ function AdminDashboard() {
     const lesson = getLesson(classForm.lessonId, data.lessons)
     const teacher = sortedTeachers.find(item => item.id === classForm.teacherId)
     const levelId = lesson?.levelId || ''
+    const durationHours = 1
     const slotKey = buildClassSlotKey({
       date: classForm.date,
       time: classForm.time,
@@ -416,12 +524,12 @@ function AdminDashboard() {
       date: classForm.date,
       time: classForm.time,
       startAt: buildMexicoDateTimeIso(classForm.date, classForm.time),
-      endAt: buildMexicoDateTimeIso(classForm.date, classForm.time, 1),
+      endAt: buildMexicoDateTimeIso(classForm.date, classForm.time, durationHours),
       durationHours: 1,
       studentIds: classStudentIds,
       room: classLevel?.shortName ? `Salon ${classLevel.shortName}` : 'Salon por asignar',
       mode: 'presencial',
-      status: classForm.status || 'programada',
+      status: 'programada',
       reservationSource: editingClassId ? 'admin-edited' : 'admin-manual',
       aiAssignment: {
         provider: 'admin-manual',
@@ -435,27 +543,120 @@ function AdminDashboard() {
 
   const submitClass = async (event) => {
     event.preventDefault()
-    if (!classForm.teacherId || !classForm.lessonId || !classForm.time) return
+    if (!classForm.teacherId || !classForm.lessonId || !classForm.time) {
+      setMessage('Selecciona leccion, horario y teacher para formar la clase.')
+      return
+    }
+    if (classStudentIds.length > 8) {
+      setMessage('Maximo 8 estudiantes por clase.')
+      return
+    }
 
     const payload = buildClassPayload()
     if (editingClassId) {
       await updateClass(editingClassId, payload)
+      const selectedSet = new Set(classStudentIds)
+      const cleanupIds = mergeSourceClassIds
+        .filter(classId => classId !== editingClassId)
+        .filter(classId => {
+          const classItem = data.classes.find(item => item.id === classId)
+          return classItem && (classItem.studentIds || []).every(studentId => selectedSet.has(studentId))
+        })
+
+      for (const classId of cleanupIds) {
+        await deleteClass(classId)
+      }
+
+      if (cleanupIds.length) {
+        setMessage(`Clase formada; se fusionaron ${cleanupIds.length + 1} reservas del mismo horario.`)
+      }
     } else {
       await createClass(payload)
     }
     resetClassForm()
   }
 
-  const editClass = (classItem) => {
+  const editClass = (classItem, overrides = {}) => {
     setEditingClassId(classItem.id)
     setClassForm({
-      lessonId: classItem.lessonIds?.[0] || '',
-      teacherId: classItem.teacherId || '',
+      lessonId: overrides.lessonId ?? classItem.lessonIds?.[0] ?? '',
+      teacherId: overrides.teacherId ?? classItem.teacherId ?? '',
       date: classItem.date || getClassDateValue(classItem.startAt),
       time: classItem.time || getClassTimeValue(classItem.startAt),
-      status: classItem.status || 'programada'
+      durationHours: overrides.durationHours ?? classItem.durationHours ?? 1,
+      status: overrides.status ?? classItem.status ?? (classItem.teacherId ? 'programada' : 'pendiente_asignacion')
     })
-    setClassStudentIds(classItem.studentIds || [])
+    setMergeSourceClassIds(overrides.sourceClassIds || [])
+    setClassStudentIds((overrides.studentIds || classItem.studentIds || []).slice(0, 8))
+  }
+
+  const submitBlockout = async (event) => {
+    event.preventDefault()
+    if (!blockoutForm.date) return
+    if (!blockoutForm.allDay && !blockoutForm.time) {
+      setMessage('Selecciona una hora o marca dia completo.')
+      return
+    }
+
+    await createBlockout(blockoutForm)
+    setBlockoutForm({ date: todayMexico, time: '', allDay: true, reason: '' })
+  }
+
+  const requestGeminiClassPlan = async () => {
+    if (!pendingAssignmentClasses.length) {
+      setMessage('No hay reservas pendientes para Gemini.')
+      return
+    }
+
+    try {
+      setAiClassLoading(true)
+      const plan = await generateClassFormationSuggestions({
+        pendingClasses: pendingAssignmentClasses,
+        students: data.students,
+        teachers: sortedTeachers,
+        classes: data.classes,
+        lessons: data.lessons,
+        levels: data.levels
+      })
+      setAiClassPlan(plan)
+      setMessage(plan.provider === 'firebase-ai-logic'
+        ? `Gemini Flash-Lite sugirio ${plan.suggestions.length} acomodos.`
+        : `Se genero acomodo local: ${plan.summary}`)
+    } catch (error) {
+      setMessage(error.message || 'No se pudo generar sugerencia Gemini.')
+    } finally {
+      setAiClassLoading(false)
+    }
+  }
+
+  const applyAiClassSuggestion = (suggestion) => {
+    const classItem = data.classes.find(item => item.id === suggestion.classId)
+    if (!classItem) return
+    const sourceClassIds = (suggestion.sourceClassIds?.length ? suggestion.sourceClassIds : [suggestion.classId])
+      .filter(classId => data.classes.some(item => item.id === classId))
+
+    editClass(classItem, {
+      lessonId: suggestion.lessonId || classItem.lessonIds?.[0] || '',
+      teacherId: '',
+      status: 'pendiente_asignacion',
+      sourceClassIds,
+      studentIds: suggestion.studentIds?.length ? suggestion.studentIds : classItem.studentIds
+    })
+    setMessage('Sugerencia cargada. Ahora asigna teacher y guarda la clase.')
+  }
+
+  const applySlotGroup = (slotGroup) => {
+    const classItem = data.classes.find(item => item.id === slotGroup.sourceClassIds[0])
+    if (!classItem) return
+
+    editClass(classItem, {
+      lessonId: classItem.lessonIds?.[0] || '',
+      teacherId: '',
+      status: 'pendiente_asignacion',
+      sourceClassIds: slotGroup.sourceClassIds,
+      studentIds: slotGroup.studentIds
+    })
+    setMessage('Grupo por horario cargado. Elige leccion, asigna teacher y guarda una sola clase.')
   }
 
   const submitAttendance = async (event) => {
@@ -539,19 +740,19 @@ function AdminDashboard() {
         <small>Perfiles con seguimiento</small>
       </article>
       <article className="metric-card">
-        <span>Becas en riesgo</span>
-        <strong>{insights.metrics.scholarshipRisk}</strong>
-        <small>Requieren accion</small>
+        <span>Horarios por formar</span>
+        <strong>{pendingAssignmentSlotGroups.length}</strong>
+        <small>{pendingAssignmentClasses.length} reservas pendientes</small>
+      </article>
+      <article className="metric-card">
+        <span>Clases programadas</span>
+        <strong>{data.classes.filter(item => getEffectiveClassStatus(item) === 'programada').length}</strong>
+        <small>Con teacher asignado</small>
       </article>
       <article className="metric-card">
         <span>Pagos vencidos</span>
         <strong>{insights.metrics.overduePayments}</strong>
-        <small>Impactan la beca</small>
-      </article>
-      <article className="metric-card">
-        <span>Clases auto/manual</span>
-        <strong>{data.classes.length}</strong>
-        <small>Reservas y correcciones</small>
+        <small>Impactan continuidad</small>
       </article>
     </section>
   )
@@ -852,8 +1053,75 @@ function AdminDashboard() {
       <article className="panel-card admin-card">
         <div className="admin-section-title">
           <div>
-            <h2>{editingClassId ? 'Editar clase' : 'Crear clase manual'}</h2>
-            <p>El flujo normal es automatico por reservas; aqui el admin solo corrige o crea excepciones.</p>
+            <h2>Reservas por asignar</h2>
+            <p>Alumnos reservan horario y leccion; Admin forma la clase final con teacher.</p>
+          </div>
+          <div className="row-actions">
+            <StatusBadge severity={pendingAssignmentSlotGroups.length ? 'warning' : 'ok'}>{pendingAssignmentSlotGroups.length} horarios / {pendingAssignmentClasses.length} reservas</StatusBadge>
+            <button className="btn btn-secondary small-btn" type="button" onClick={requestGeminiClassPlan} disabled={aiClassLoading || !pendingAssignmentClasses.length}>
+              {aiClassLoading ? 'Pensando...' : 'Sugerir con Gemini Flash-Lite'}
+            </button>
+          </div>
+        </div>
+        {aiClassPlan && (
+          <div className="highlight-panel section-gap">
+            <div className="admin-section-title">
+              <div>
+                <h3>Propuesta Gemini</h3>
+                <p>{aiClassPlan.summary}</p>
+              </div>
+              <StatusBadge severity={aiClassPlan.provider === 'firebase-ai-logic' ? 'ok' : 'warning'}>{aiClassPlan.model}</StatusBadge>
+            </div>
+            <div className="stack-list">
+              {aiClassPlan.suggestions.map(suggestion => {
+                const lesson = getLesson(suggestion.lessonId, data.lessons)
+                const sourceClass = data.classes.find(item => item.id === suggestion.classId)
+                const sourceCount = suggestion.sourceClassIds?.length || 1
+                return (
+                  <div className="list-row" key={`${suggestion.classId}-${suggestion.lessonId || 'sin-leccion'}`}>
+                    <div>
+                      <strong>{lesson?.name || 'Sin leccion viable'}</strong>
+                      <small>{suggestion.studentIds.length}/8 alumnos - {sourceCount} reservas fusionadas - {formatClassHours(sourceClass)} - confianza {Math.round((suggestion.confidence || 0) * 100)}% - {suggestion.reason}</small>
+                    </div>
+                    <button className="btn btn-primary small-btn" type="button" onClick={() => applyAiClassSuggestion(suggestion)}>
+                      Cargar propuesta
+                    </button>
+                  </div>
+                )
+              })}
+              {aiClassPlan.warnings.map(warning => <p className="system-message" key={warning}>{warning}</p>)}
+            </div>
+          </div>
+        )}
+        <div className="stack-list">
+          {pendingAssignmentSlotGroups.map(group => {
+            const levels = uniqueValues(group.students.map(student => getLevel(student.currentLevelId, data.levels)?.shortName || 'Sin nivel'))
+            return (
+              <div className="list-row reservation-block-row" key={group.id}>
+                <div>
+                  <strong>{formatDateTime(group.startAt)} - clase sugerida</strong>
+                  <small>{group.studentIds.length}/8 estudiantes - niveles: {levels.join(', ')} - {group.sourceClassIds.length} reservas fusionables</small>
+                  <div className="inline-subrows">
+                    {group.students.map(student => (
+                      <small key={student.id}>{student.publicId} - {student.fullName} - {getLevel(student.currentLevelId, data.levels)?.shortName || 'Sin nivel'}</small>
+                    ))}
+                  </div>
+                </div>
+                <button className="btn btn-primary small-btn" type="button" onClick={() => applySlotGroup(group)}>
+                  Formar una clase
+                </button>
+              </div>
+            )
+          })}
+          {!pendingAssignmentSlotGroups.length && <p className="empty-state">No hay reservas pendientes por formar.</p>}
+        </div>
+      </article>
+
+      <article className="panel-card admin-card">
+        <div className="admin-section-title">
+          <div>
+            <h2>{editingClassId ? 'Formar / editar clase' : 'Crear clase manual'}</h2>
+            <p>Selecciona leccion, teacher y hasta 8 alumnos. Al guardar, siempre queda programada.</p>
           </div>
           {classLevel && <StatusBadge severity="info">{classLevel.shortName}</StatusBadge>}
         </div>
@@ -889,30 +1157,30 @@ function AdminDashboard() {
               {classTimeOptions.map(time => <option value={time} key={time}>{time}</option>)}
             </select>
           </label>
-          <label className="form-field">
-            <span>Estatus</span>
-            <select value={classForm.status} onChange={event => setClassForm(prev => ({ ...prev, status: event.target.value }))}>
-              <option value="programada">Programada</option>
-              <option value="completada">Completada</option>
-              <option value="cancelada">Cancelada</option>
-            </select>
-          </label>
           <div className="form-field span-2">
-            <span>Estudiantes asignados ({classStudentIds.length})</span>
-            <div className="attendance-check-grid compact-check-grid">
-              {sortedStudents.map(student => {
-                const checked = classStudentIds.includes(student.id)
-                return (
-                  <label className="attendance-check" key={student.id}>
-                    <input type="checkbox" checked={checked} onChange={event => toggleClassStudent(student.id, event.target.checked)} />
-                    <span>
-                      <strong>{student.fullName}</strong>
-                      <small>{student.publicId}</small>
-                    </span>
-                  </label>
-                )
-              })}
-            </div>
+            <span>Estudiantes</span>
+            <details className="dropdown-checklist">
+              <summary>{classStudentIds.length}/8 estudiantes seleccionados</summary>
+              <div className="attendance-check-grid compact-check-grid">
+                {sortedStudents.map(student => {
+                  const checked = classStudentIds.includes(student.id)
+                  return (
+                    <label className="attendance-check" key={student.id}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={!checked && classStudentIds.length >= 8}
+                        onChange={event => toggleClassStudent(student.id, event.target.checked)}
+                      />
+                      <span>
+                        <strong>{student.fullName}</strong>
+                        <small>{student.publicId}</small>
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
+            </details>
           </div>
           <div className="row-actions form-wide-actions">
             <button className="btn btn-primary small-btn" type="submit" disabled={saving}>{editingClassId ? 'Actualizar clase' : 'Guardar clase'}</button>
@@ -925,7 +1193,7 @@ function AdminDashboard() {
         <div className="admin-section-title">
           <div>
             <h2>Clases registradas</h2>
-            <p>Reservas automaticas, teachers asignados y correcciones manuales.</p>
+            <p>Reservas pendientes, clases formadas por admin y correcciones manuales.</p>
           </div>
         </div>
         <div className="stack-list">
@@ -936,10 +1204,10 @@ function AdminDashboard() {
               <div className="list-row" key={classItem.id}>
                 <div>
                   <strong>{level?.shortName || 'Nivel'} - {lesson?.name || 'Sin leccion'}</strong>
-                  <small>{formatDateTime(classItem.startAt)} - {classItem.teacherName || 'Por asignar'} - {classItem.studentIds?.length || 0} estudiantes - {classItem.reservationSource || 'manual'}</small>
+                  <small>{formatDateTime(classItem.startAt)} - {formatClassHours(classItem)} - {classItem.teacherName || 'Sin teacher'} - {classItem.studentIds?.length || 0}/8 estudiantes - {classItem.reservationSource || 'manual'}</small>
                 </div>
                 <div className="row-actions">
-                  <StatusBadge severity={classItem.status === 'cancelada' ? 'warning' : 'info'}>{classItem.status}</StatusBadge>
+                  <StatusBadge severity={getEffectiveClassStatus(classItem) === 'pendiente_asignacion' ? 'warning' : getEffectiveClassStatus(classItem) === 'cancelada' ? 'risk' : getEffectiveClassStatus(classItem) === 'completada' ? 'ok' : 'info'}>{getEffectiveClassStatus(classItem)}</StatusBadge>
                   <button className="btn btn-secondary small-btn" type="button" onClick={() => editClass(classItem)}>Editar</button>
                   <button className="btn btn-secondary small-btn danger-btn" type="button" onClick={() => deleteClass(classItem.id)} disabled={saving}>Eliminar</button>
                 </div>
@@ -947,6 +1215,54 @@ function AdminDashboard() {
             )
           })}
           {!classesByRecentDate.length && <p className="empty-state">Aun no hay clases. Se crearan cuando los alumnos reserven.</p>}
+        </div>
+      </article>
+
+      <article className="panel-card admin-card">
+        <div className="admin-section-title">
+          <div>
+            <h2>Bloquear horarios</h2>
+            <p>Cierra un dia completo o una hora por vacaciones, juntas o mantenimiento.</p>
+          </div>
+        </div>
+        <form className="admin-form-grid" onSubmit={submitBlockout}>
+          <label className="form-field">
+            <span>Fecha</span>
+            <input type="date" value={blockoutForm.date} onChange={event => setBlockoutForm(prev => ({ ...prev, date: event.target.value }))} required />
+          </label>
+          <label className="form-field">
+            <span>Tipo</span>
+            <select value={blockoutForm.allDay ? 'day' : 'hour'} onChange={event => setBlockoutForm(prev => ({ ...prev, allDay: event.target.value === 'day', time: event.target.value === 'day' ? '' : prev.time }))}>
+              <option value="day">Dia completo</option>
+              <option value="hour">Hora especifica</option>
+            </select>
+          </label>
+          {!blockoutForm.allDay && (
+            <label className="form-field">
+              <span>Hora</span>
+              <select value={blockoutForm.time} onChange={event => setBlockoutForm(prev => ({ ...prev, time: event.target.value }))} required>
+                <option value="">Seleccionar hora</option>
+                {blockoutTimeOptions.map(time => <option value={time} key={time}>{time}</option>)}
+              </select>
+            </label>
+          )}
+          <label className="form-field span-2">
+            <span>Motivo</span>
+            <input value={blockoutForm.reason} onChange={event => setBlockoutForm(prev => ({ ...prev, reason: event.target.value }))} placeholder="Vacaciones, junta, evento..." />
+          </label>
+          <button className="btn btn-primary small-btn" type="submit" disabled={saving || !isAdmin}>Guardar bloqueo</button>
+        </form>
+        <div className="stack-list section-gap">
+          {sortedBlockouts.map(blockout => (
+            <div className="list-row" key={blockout.id}>
+              <div>
+                <strong>{formatDateInputLabel(blockout.date)} - {blockout.allDay ? 'Dia completo' : blockout.time}</strong>
+                <small>{blockout.reason || 'Sin motivo'}</small>
+              </div>
+              <button className="btn btn-secondary small-btn danger-btn" type="button" onClick={() => deleteBlockout(blockout.id)} disabled={saving || !isAdmin}>Eliminar</button>
+            </div>
+          ))}
+          {!sortedBlockouts.length && <p className="empty-state">No hay horarios bloqueados.</p>}
         </div>
       </article>
     </section>
@@ -1137,7 +1453,7 @@ function AdminDashboard() {
           <div className="sidebar-card compact">
             <span className="kicker">Firebase</span>
             <strong>{profile?.nombre || profile?.email || 'Sin sesion'}</strong>
-            <small>El acomodo de clases usa IA local: reglas, nivel, leccion, horario y carga de teacher.</small>
+            <small>Reservas sin teacher; Admin forma grupos y asigna profesor.</small>
           </div>
         </aside>
 

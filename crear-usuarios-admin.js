@@ -91,7 +91,7 @@ async function upsertInitialStudent(studentUid) {
     currentLevelId: 'pre-starter',
     currentLessonId: 'pre-starter-lesson-01',
     progressPercent: 0,
-    availability: ['Lunes 17:00', 'Miercoles 17:00'],
+    availability: ['Lunes 17:00', 'Martes 17:00'],
     preferredMode: 'presencial',
     updatedAt: admin.firestore.FieldValue.serverTimestamp()
   }, { merge: true })

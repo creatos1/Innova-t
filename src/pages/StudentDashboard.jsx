@@ -3,12 +3,15 @@ import { Link } from 'react-router-dom'
 import { updatePassword } from 'firebase/auth'
 import StatusBadge from '../components/StatusBadge'
 import { getLesson, getLevel } from '../domain/academicCatalog'
-import { formatDate, formatDateTime } from '../domain/dateUtils'
+import { formatDate, formatDateTime, toDate } from '../domain/dateUtils'
 import { getStudentViewModel } from '../domain/instituteState'
 import {
   buildAutoClassAssignment,
   formatDateInputLabel,
+  getClassDateValue,
+  getConsecutiveReservationDurations,
   getDefaultReservationSlot,
+  getNextReservationDate,
   getScheduleHoursForDate,
   isCancelableClass,
   isValidReservationSlot
@@ -31,6 +34,25 @@ function formatDateSafe(value) {
   return formatDate(value)
 }
 
+function getReservationWeekKey(dateValue) {
+  if (!dateValue) return ''
+  const date = new Date(`${dateValue}T12:00:00-06:00`)
+  date.setUTCDate(date.getUTCDate() - date.getUTCDay())
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`
+}
+
+function getEffectiveClassStatus(classItem) {
+  if (classItem.status === 'cancelada') return 'cancelada'
+  if (classItem.status === 'pendiente_asignacion' || !classItem.teacherId) return 'pendiente_asignacion'
+  const endAt = toDate(classItem.endAt)
+  return endAt && endAt < new Date() ? 'completada' : 'programada'
+}
+
+function getReservedClassHours(classItem) {
+  const hours = Number(classItem.durationHours || 1)
+  return Number.isFinite(hours) ? Math.max(1, hours) : 1
+}
+
 function StudentDashboard() {
   const {
     data,
@@ -45,7 +67,7 @@ function StudentDashboard() {
     reserveStudentClass,
     cancelStudentReservation
   } = useInstituteData()
-  const defaultSlot = useMemo(() => getDefaultReservationSlot(), [])
+  const defaultSlot = useMemo(() => ({ ...getDefaultReservationSlot(), durationHours: 1 }), [])
   const [activeTab, setActiveTab] = useState('reserve')
   const [selectedStudentId, setSelectedStudentId] = useState('')
   const [reservationForm, setReservationForm] = useState(defaultSlot)
@@ -67,10 +89,36 @@ function StudentDashboard() {
   ), [selectedStudentId, data, insights])
 
   const { student, attendance, payments, grades, upcomingClasses } = viewModel
+  const tomorrowDate = useMemo(() => getNextReservationDate(), [])
+  const studentReservations = useMemo(() => (
+    data.classes.filter(classItem => (
+      classItem.studentIds?.includes(student?.id)
+      && (classItem.status || 'programada') !== 'cancelada'
+    ))
+  ), [data.classes, student?.id])
+  const dayReservedHours = useMemo(() => (
+    studentReservations.filter(classItem => (
+      (classItem.date || getClassDateValue(classItem.startAt)) === reservationForm.date
+    )).reduce((sum, classItem) => sum + getReservedClassHours(classItem), 0)
+  ), [reservationForm.date, studentReservations])
+  const weekReservedHours = useMemo(() => {
+    const targetWeek = getReservationWeekKey(reservationForm.date)
+    return studentReservations.filter(classItem => (
+      getReservationWeekKey(classItem.date || getClassDateValue(classItem.startAt)) === targetWeek
+    )).reduce((sum, classItem) => sum + getReservedClassHours(classItem), 0)
+  }, [reservationForm.date, studentReservations])
+  const remainingDayHours = Math.max(0, 3 - dayReservedHours)
+  const remainingWeekHours = Math.max(0, 6 - weekReservedHours)
+  const hasReservedBlockForDate = dayReservedHours > 0
+  const maxReservationHours = hasReservedBlockForDate ? 0 : Math.min(3, remainingDayHours, remainingWeekHours)
   const reservationTimes = useMemo(() => (
     getScheduleHoursForDate(reservationForm.date)
-      .filter(time => isValidReservationSlot(reservationForm.date, time))
-  ), [reservationForm.date])
+      .filter(time => isValidReservationSlot(reservationForm.date, time, new Date(), data.blockouts))
+  ), [data.blockouts, reservationForm.date])
+  const reservationDurations = useMemo(() => (
+    getConsecutiveReservationDurations(reservationForm.date, reservationForm.time, new Date(), data.blockouts)
+      .filter(hours => hours <= maxReservationHours)
+  ), [data.blockouts, maxReservationHours, reservationForm.date, reservationForm.time])
   const reservationPlan = useMemo(() => {
     if (!student) return null
 
@@ -80,34 +128,66 @@ function StudentDashboard() {
         recommendation: student.academicRecommendation,
         data,
         date: reservationForm.date,
-        time: reservationForm.time
+        time: reservationForm.time,
+        durationHours: reservationForm.durationHours
       })
     } catch {
       return null
     }
-  }, [data, reservationForm.date, reservationForm.time, student])
+  }, [data, reservationForm.date, reservationForm.durationHours, reservationForm.time, student])
   const requireLogin = !loading && (!user || !profile)
   const noStudent = !loading && !student
 
   useEffect(() => {
+    if (reservationForm.date !== tomorrowDate) {
+      setReservationForm(prev => ({ ...prev, date: tomorrowDate }))
+      return
+    }
+
     if (reservationTimes.includes(reservationForm.time)) return
     setReservationForm(prev => ({
       ...prev,
-      time: reservationTimes[0] || ''
+      time: reservationTimes[0] || '',
+      durationHours: 1
     }))
-  }, [reservationForm.time, reservationTimes])
+  }, [reservationForm.date, reservationForm.time, reservationTimes, tomorrowDate])
+
+  useEffect(() => {
+    if (!reservationDurations.length) return
+    const currentDuration = Number(reservationForm.durationHours || 1)
+    if (reservationDurations.includes(currentDuration)) return
+    setReservationForm(prev => ({ ...prev, durationHours: reservationDurations[0] }))
+  }, [reservationDurations, reservationForm.durationHours])
 
   const canCancelClass = (classItem) => isCancelableClass(classItem.startAt)
 
   const reserveClass = async (event) => {
     event.preventDefault()
     try {
+      if (remainingDayHours <= 0) {
+        setMessage('Ya tienes 3 horas reservadas para manana.')
+        return
+      }
+      if (hasReservedBlockForDate) {
+        setMessage('Ya tienes un bloque reservado para manana. Cancela ese bloque si necesitas cambiar la duracion.')
+        return
+      }
+      if (remainingWeekHours <= 0) {
+        setMessage('Ya tienes las 6 horas de esta semana. Se reinicia el domingo.')
+        return
+      }
+      if (!reservationDurations.includes(Number(reservationForm.durationHours || 1))) {
+        setMessage('Elige un bloque disponible de 1 a 3 horas seguidas.')
+        return
+      }
+
       const assignment = buildAutoClassAssignment({
         student,
         recommendation: student.academicRecommendation,
         data,
         date: reservationForm.date,
-        time: reservationForm.time
+        time: reservationForm.time,
+        durationHours: reservationForm.durationHours
       })
       await reserveStudentClass(assignment)
     } catch (error) {
@@ -189,9 +269,9 @@ function StudentDashboard() {
         <div className="admin-section-title">
           <div>
             <h2>Reservar clase</h2>
-            <p>Elige dia y hora. El sistema acomoda nivel, leccion y teacher automaticamente.</p>
+            <p>Solo puedes reservar para manana. La semana se reinicia cada domingo.</p>
           </div>
-          <StatusBadge severity="info">1 hora</StatusBadge>
+          <StatusBadge severity="info">{reservationForm.durationHours || 1} h</StatusBadge>
         </div>
 
         <dl className="compact-facts four-columns">
@@ -200,16 +280,20 @@ function StudentDashboard() {
             <dd>{currentLevel?.shortName || '-'}</dd>
           </div>
           <div>
-            <dt>Leccion actual</dt>
-            <dd>{currentLesson?.name || '-'}</dd>
+            <dt>Fecha</dt>
+            <dd>{formatDateInputLabel(tomorrowDate)}</dd>
           </div>
           <div>
-            <dt>Siguiente clase</dt>
-            <dd>{reservationPlan?.lesson?.name || recommendation.nextLesson?.name || '-'}</dd>
+            <dt>Manana</dt>
+            <dd>{dayReservedHours}/3 horas</dd>
           </div>
           <div>
-            <dt>Teacher sugerido</dt>
-            <dd>{reservationPlan?.teacher?.name || 'Por asignar'}</dd>
+            <dt>Semana</dt>
+            <dd>{weekReservedHours}/6 horas</dd>
+          </div>
+          <div>
+            <dt>Disponible</dt>
+            <dd>{maxReservationHours} horas</dd>
           </div>
         </dl>
 
@@ -219,8 +303,10 @@ function StudentDashboard() {
             <input
               type="date"
               value={reservationForm.date}
-              min={defaultSlot.date}
-              onChange={event => setReservationForm(prev => ({ ...prev, date: event.target.value }))}
+              min={tomorrowDate}
+              max={tomorrowDate}
+              onChange={() => setReservationForm(prev => ({ ...prev, date: tomorrowDate }))}
+              readOnly
               required
             />
           </label>
@@ -230,22 +316,21 @@ function StudentDashboard() {
               {reservationTimes.map(time => <option value={time} key={time}>{time}</option>)}
             </select>
           </label>
-          <button className="btn btn-primary small-btn" type="submit" disabled={saving || !reservationPlan}>
-            Reservar clase
+          <label className="form-field">
+            <span>Duracion</span>
+            <select value={reservationForm.durationHours} onChange={event => setReservationForm(prev => ({ ...prev, durationHours: Number(event.target.value) }))} required>
+              {reservationDurations.map(hours => <option value={hours} key={hours}>{hours} {hours === 1 ? 'hora' : 'horas'}</option>)}
+            </select>
+          </label>
+          <button className="btn btn-primary small-btn" type="submit" disabled={saving || !reservationPlan || !reservationDurations.length || hasReservedBlockForDate || remainingDayHours <= 0 || remainingWeekHours <= 0}>
+            Reservar bloque
           </button>
         </form>
 
-        {reservationPlan ? (
-          <div className="list-row section-gap">
-            <div>
-              <strong>{reservationPlan.level?.shortName || 'Nivel'} - {reservationPlan.lesson?.name}</strong>
-              <small>{formatDateInputLabel(reservationForm.date)} {reservationForm.time} - {reservationPlan.reason}</small>
-            </div>
-            <StatusBadge severity="ok">Disponible</StatusBadge>
-          </div>
-        ) : (
-          <p className="empty-state section-gap">Selecciona un horario con minimo 24 horas de anticipacion.</p>
-        )}
+        {!reservationTimes.length && <p className="empty-state section-gap">No hay horarios disponibles para reservar manana.</p>}
+        {hasReservedBlockForDate && <p className="empty-state section-gap">Ya tienes un bloque reservado para manana. Para cambiarlo, cancela el bloque actual y reserva de nuevo.</p>}
+        {!!reservationTimes.length && !reservationDurations.length && <p className="empty-state section-gap">No hay un bloque seguido disponible en ese horario o ya llegaste al limite diario/semanal.</p>}
+        {remainingWeekHours <= 0 && <p className="empty-state section-gap">Ya completaste tus 6 horas de la semana.</p>}
       </article>
 
       <article className="panel-card admin-card">
@@ -261,6 +346,7 @@ function StudentDashboard() {
               <th>Fecha</th>
               <th>Clase</th>
               <th>Teacher</th>
+              <th>Horas</th>
               <th>Estatus</th>
               <th>Accion</th>
             </tr>
@@ -269,9 +355,10 @@ function StudentDashboard() {
             {upcomingClasses.map(classItem => (
               <tr key={classItem.id}>
                 <td>{formatDateTime(classItem.startAt)}</td>
-                <td>{getLesson(classItem.lessonIds?.[0], data.lessons)?.name || classItem.lessonName || '-'}</td>
-                <td>{classItem.teacherName || 'Por asignar'}</td>
-                <td>{classItem.status || 'programada'}</td>
+                <td>{getLesson(classItem.lessonIds?.[0], data.lessons)?.name || classItem.lessonName || 'Pendiente'}</td>
+                <td>{classItem.teacherName || 'Pendiente admin'}</td>
+                <td>{getReservedClassHours(classItem)}</td>
+                <td>{getEffectiveClassStatus(classItem)}</td>
                 <td>
                   <button className="btn btn-secondary small-btn" type="button" onClick={() => cancelClass(classItem)} disabled={!canCancelClass(classItem)}>
                     {canCancelClass(classItem) ? 'Cancelar' : 'Cerrado'}
@@ -281,7 +368,7 @@ function StudentDashboard() {
             ))}
             {!upcomingClasses.length && (
               <tr>
-                <td colSpan="5">No tienes clases reservadas.</td>
+                <td colSpan="6">No tienes clases reservadas.</td>
               </tr>
             )}
           </tbody>

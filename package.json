@@ -9,6 +9,7 @@
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "crear-usuarios": "node crear-usuarios.js",
+    "crear-estudiantes": "node crear-estudiantes-masivos.js",
     "crear-usuarios:admin-sdk": "node crear-usuarios-admin.js",
     "firebase:login": "npx firebase-tools login",
     "deploy:rules": "npx firebase-tools deploy --only firestore:rules --project innova-t-f16bb",

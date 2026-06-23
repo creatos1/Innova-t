@@ -41,10 +41,13 @@ export function formatTime(value) {
 export function getWeekKey(value = new Date()) {
   const date = toDate(value)
   const target = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
-  const dayNumber = target.getUTCDay() || 7
-  target.setUTCDate(target.getUTCDate() + 4 - dayNumber)
+  target.setUTCDate(target.getUTCDate() - target.getUTCDay())
   const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1))
-  const weekNumber = Math.ceil(((target - yearStart) / 86400000 + 1) / 7)
+  const firstSundayOffset = yearStart.getUTCDay() === 0 ? 0 : 7 - yearStart.getUTCDay()
+  const firstSunday = new Date(Date.UTC(target.getUTCFullYear(), 0, 1 + firstSundayOffset))
+  const weekNumber = target < firstSunday
+    ? 1
+    : Math.floor((target - firstSunday) / 604800000) + 1
 
   return `${target.getUTCFullYear()}-W${String(weekNumber).padStart(2, '0')}`
 }

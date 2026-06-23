@@ -29,6 +29,7 @@ const COLLECTIONS = {
   payments: 'pagos',
   grades: 'calificaciones',
   alerts: 'becaEventos',
+  blockouts: 'bloqueos',
   aiRecommendations: 'aiRecommendations'
 }
 
@@ -42,7 +43,8 @@ export const EMPTY_INSTITUTE_DATA = {
   attendance: [],
   payments: [],
   grades: [],
-  alerts: []
+  alerts: [],
+  blockouts: []
 }
 
 export const DEFAULT_TEACHERS = [
@@ -104,6 +106,7 @@ export function subscribeInstituteData({ profile, onData, onError }) {
   attach('lessons', collection(db, COLLECTIONS.lessons))
   attach('teachers', collection(db, COLLECTIONS.teachers))
   attach('classes', collection(db, COLLECTIONS.classes))
+  attach('blockouts', collection(db, COLLECTIONS.blockouts))
 
   if (isStaff(profile)) {
     attach('students', collection(db, COLLECTIONS.students))
@@ -338,6 +341,22 @@ export async function deleteClassRecord(classId) {
   await deleteDoc(doc(db, COLLECTIONS.classes, classId))
 }
 
+export async function createBlockoutRecord(payload) {
+  const result = await addDoc(collection(db, COLLECTIONS.blockouts), {
+    date: payload.date,
+    time: payload.allDay ? '' : payload.time || '',
+    allDay: payload.allDay === true,
+    reason: payload.reason || '',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  })
+  return result.id
+}
+
+export async function deleteBlockoutRecord(blockoutId) {
+  await deleteDoc(doc(db, COLLECTIONS.blockouts, blockoutId))
+}
+
 export async function updateClassRosterRecord(classId, studentIds = []) {
   await updateDoc(doc(db, COLLECTIONS.classes, classId), {
     studentIds,
@@ -346,8 +365,42 @@ export async function updateClassRosterRecord(classId, studentIds = []) {
 }
 
 export async function reserveStudentClassRecord(assignment) {
-  const classId = assignment.classId || assignment.payload?.id
-  const studentId = assignment.studentId
+  const assignments = Array.isArray(assignment.assignments) && assignment.assignments.length
+    ? assignment.assignments
+    : [assignment]
+
+  if (assignments.length > 1) {
+    const batch = writeBatch(db)
+
+    for (const classAssignment of assignments) {
+      const classId = classAssignment.classId || classAssignment.payload?.id
+      const studentId = classAssignment.studentId || assignment.studentId
+      const classRef = doc(db, COLLECTIONS.classes, classId)
+      const classSnapshot = await getDoc(classRef)
+
+      if (classSnapshot.exists()) {
+        batch.update(classRef, {
+          studentIds: arrayUnion(studentId),
+          updatedAt: serverTimestamp()
+        })
+      } else {
+        batch.set(classRef, {
+          ...classAssignment.payload,
+          id: classId,
+          studentIds: [studentId],
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        }, { merge: true })
+      }
+    }
+
+    await batch.commit()
+    return assignment.reservationBlockId || assignments[0].classId
+  }
+
+  const classAssignment = assignments[0]
+  const classId = classAssignment.classId || classAssignment.payload?.id
+  const studentId = classAssignment.studentId || assignment.studentId
   const classRef = doc(db, COLLECTIONS.classes, classId)
   const classSnapshot = await getDoc(classRef)
 
@@ -360,7 +413,7 @@ export async function reserveStudentClassRecord(assignment) {
   }
 
   await setDoc(classRef, {
-    ...assignment.payload,
+    ...classAssignment.payload,
     id: classId,
     studentIds: [studentId],
     createdAt: serverTimestamp(),
