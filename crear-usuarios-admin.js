@@ -89,9 +89,8 @@ async function upsertInitialStudent(studentUid) {
     enrollmentDate: new Date().toISOString().slice(0, 10),
     paymentDueDate: new Date().toISOString().slice(0, 10),
     currentLevelId: 'pre-starter',
-    currentLessonId: 'pre-starter-lesson-01',
+    currentLessonId: 'L1',
     progressPercent: 0,
-    availability: ['Lunes 17:00', 'Martes 17:00'],
     preferredMode: 'presencial',
     updatedAt: admin.firestore.FieldValue.serverTimestamp()
   }, { merge: true })

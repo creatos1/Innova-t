@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { updatePassword } from 'firebase/auth'
+import ActionMessageModal from '../components/ActionMessageModal'
+import BrandLogo from '../components/BrandLogo'
 import StatusBadge from '../components/StatusBadge'
 import { getLesson, getLessonsByLevel, getLevel } from '../domain/academicCatalog'
 import { formatDateTime, toDate } from '../domain/dateUtils'
@@ -21,7 +23,8 @@ function getClassDurationHours(classItem) {
   return Number.isFinite(hours) ? Math.max(1, hours) : 1
 }
 
-function getTakenLessonIds(studentId, classes = [], attendance = []) {
+function getTakenLessonIds(student, classes = [], attendance = []) {
+  const studentId = student?.id
   const attendedClassIds = new Set(
     attendance
       .filter(record => record.studentId === studentId && record.attended === true)
@@ -29,10 +32,13 @@ function getTakenLessonIds(studentId, classes = [], attendance = []) {
   )
 
   return new Set(
-    classes
+    [
+      ...(Array.isArray(student?.completedLessonIds) ? student.completedLessonIds : []),
+      ...classes
       .filter(classItem => attendedClassIds.has(classItem.id))
       .flatMap(classItem => classItem.lessonIds || [])
       .filter(Boolean)
+    ]
   )
 }
 
@@ -45,20 +51,17 @@ function TeacherDashboard() {
     authError,
     message,
     saving,
-    createBulkAttendance,
-    saveGrade
+    setMessage,
+    createClassroom,
+    createBulkAttendance
   } = useInstituteData()
   const [selectedClassId, setSelectedClassId] = useState('')
   const [attendanceChecked, setAttendanceChecked] = useState({})
   const [progressStudentId, setProgressStudentId] = useState('')
-  const [gradeForm, setGradeForm] = useState({
-    studentId: '',
-    levelId: '',
-    oral: '',
-    written: ''
-  })
+  const [classroomForm, setClassroomForm] = useState({ name: '' })
   const [newPassword, setNewPassword] = useState('')
   const [passwordMessage, setPasswordMessage] = useState('')
+  const navigate = useNavigate()
 
   const requireLogin = !loading && (!user || !profile)
   const teacherId = profile?.teacherId || data.teachers.find(teacher => teacher.name === profile?.nombre)?.id || ''
@@ -80,13 +83,16 @@ function TeacherDashboard() {
       .map(record => [record.studentId, record])
     return new Map(entries)
   }, [data.attendance, selectedClass])
-  const teacherStudents = useMemo(() => {
-    const ids = new Set(teacherClasses.flatMap(classItem => classItem.studentIds || []))
-    return sortByName(data.students.filter(student => ids.has(student.id)))
-  }, [data.students, teacherClasses])
   const sortedLevels = useMemo(() => (
     [...data.levels].sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
   ), [data.levels])
+
+  useEffect(() => {
+    if (loading || !profile) return
+    const role = profile.rol || profile.role
+    if (role === 'admin') navigate('/admin-dashboard/', { replace: true })
+    if (role === 'estudiante') navigate('/student-dashboard/', { replace: true })
+  }, [loading, navigate, profile])
 
   useEffect(() => {
     if (!selectedClassId && teacherClasses[0]?.id) {
@@ -112,16 +118,6 @@ function TeacherDashboard() {
   useEffect(() => {
     setProgressStudentId('')
   }, [selectedClass?.id])
-
-  useEffect(() => {
-    if (!gradeForm.studentId && teacherStudents[0]?.id) {
-      setGradeForm(prev => ({
-        ...prev,
-        studentId: teacherStudents[0].id,
-        levelId: teacherStudents[0].currentLevelId || ''
-      }))
-    }
-  }, [gradeForm.studentId, teacherStudents])
 
   const submitAttendance = async (event) => {
     event.preventDefault()
@@ -150,9 +146,11 @@ function TeacherDashboard() {
     await createBulkAttendance(records)
   }
 
-  const submitGrade = async (event) => {
+  const submitClassroom = async (event) => {
     event.preventDefault()
-    await saveGrade(gradeForm)
+    if (!classroomForm.name.trim()) return
+    await createClassroom({ ...classroomForm, active: true })
+    setClassroomForm({ name: '' })
   }
 
   const changePassword = async (event) => {
@@ -204,17 +202,11 @@ function TeacherDashboard() {
     <div className="dashboard-body admin-system excel-system">
       <div className="dashboard-shell">
         <aside className="sidebar admin-sidebar">
-          <Link className="brand" to="/">
-            <span className="brand-mark">IT</span>
-            <span>
-              <strong>Innova-T</strong>
-              <small>Teacher Panel</small>
-            </span>
-          </Link>
+          <BrandLogo panel="Teacher Panel" />
           <nav className="sidebar-nav">
             <a className="active" href="#clases">Clases</a>
             <a href="#asistencia">Asistencia</a>
-            <a href="#calificaciones">Calificaciones</a>
+            <a href="#classrooms">Classrooms</a>
           </nav>
           <div className="sidebar-card compact">
             <span className="kicker">Teacher</span>
@@ -228,15 +220,12 @@ function TeacherDashboard() {
             <div>
               <span className="eyebrow">Operacion teacher</span>
               <h1>Mis clases y alumnos</h1>
-              <p className="page-subtitle">Toma asistencia y captura solo examen oral y escrito por nivel.</p>
+              <p className="page-subtitle">Toma asistencia y revisa progreso de tus alumnos.</p>
             </div>
             <div className="header-actions">
-              <Link className="btn btn-secondary" to="/student-dashboard">Vista estudiante</Link>
               <Link className="btn btn-secondary" to="/login">Cerrar sesion</Link>
             </div>
           </header>
-
-          {message && <p className="system-message">{message}</p>}
 
           <section id="clases" className="panel-card admin-card">
             <div className="admin-section-title">
@@ -245,11 +234,12 @@ function TeacherDashboard() {
                 <p>Tabla operativa para seleccionar la clase de trabajo.</p>
               </div>
             </div>
-            <div className="excel-table">
+            <div className="excel-table teacher-class-table">
               <div className="excel-row excel-head">
                 <span>Fecha</span>
                 <span>Nivel</span>
                 <span>Leccion</span>
+                <span>Classroom</span>
                 <span>Alumnos</span>
                 <span>Horas</span>
                 <span>Estatus</span>
@@ -261,6 +251,7 @@ function TeacherDashboard() {
                     <span>{formatDateTime(classItem.startAt)}</span>
                     <span>{getLevel(classItem.levelId || lesson?.levelId, data.levels)?.shortName || '-'}</span>
                     <span>{lesson?.name || '-'}</span>
+                    <span>{classItem.classroomName || classItem.room || '-'}</span>
                     <span>{classItem.studentIds?.length || 0}</span>
                     <span>{getClassDurationHours(classItem)}</span>
                     <span>{getEffectiveClassStatus(classItem)}</span>
@@ -281,7 +272,7 @@ function TeacherDashboard() {
             <form className="attendance-form" onSubmit={submitAttendance}>
               <div className="attendance-check-grid">
                 {classStudents.map(student => {
-                  const takenLessonIds = getTakenLessonIds(student.id, data.classes, data.attendance)
+                  const takenLessonIds = getTakenLessonIds(student, data.classes, data.attendance)
                   const showProgress = progressStudentId === student.id
                   return (
                     <div className="student-attendance-row" key={student.id}>
@@ -321,41 +312,31 @@ function TeacherDashboard() {
             </form>
           </section>
 
-          <section id="calificaciones" className="panel-card admin-card">
+          <section id="classrooms" className="panel-card admin-card">
             <div className="admin-section-title">
               <div>
-                <h2>Calificaciones</h2>
-                <p>Solo examen oral y examen escrito por nivel.</p>
+                <h2>Classrooms</h2>
+                <p>Alta rapida de salones disponibles para operacion.</p>
               </div>
             </div>
-            <form className="admin-form-grid" onSubmit={submitGrade}>
+            <form className="admin-form-grid" onSubmit={submitClassroom}>
               <label className="form-field span-2">
-                <span>Alumno</span>
-                <select value={gradeForm.studentId} onChange={event => {
-                  const student = teacherStudents.find(item => item.id === event.target.value)
-                  setGradeForm(prev => ({ ...prev, studentId: event.target.value, levelId: student?.currentLevelId || prev.levelId }))
-                }} required>
-                  <option value="">Seleccionar alumno</option>
-                  {teacherStudents.map(student => <option value={student.id} key={student.id}>{student.fullName}</option>)}
-                </select>
+                <span>Nombre</span>
+                <input value={classroomForm.name} onChange={event => setClassroomForm(prev => ({ ...prev, name: event.target.value }))} placeholder="Classroom 1" required />
               </label>
-              <label className="form-field">
-                <span>Nivel</span>
-                <select value={gradeForm.levelId} onChange={event => setGradeForm(prev => ({ ...prev, levelId: event.target.value }))} required>
-                  <option value="">Seleccionar nivel</option>
-                  {data.levels.map(level => <option value={level.id} key={level.id}>{level.shortName || level.name}</option>)}
-                </select>
-              </label>
-              <label className="form-field">
-                <span>Oral</span>
-                <input type="number" min="0" max="100" value={gradeForm.oral} onChange={event => setGradeForm(prev => ({ ...prev, oral: event.target.value }))} />
-              </label>
-              <label className="form-field">
-                <span>Escrito</span>
-                <input type="number" min="0" max="100" value={gradeForm.written} onChange={event => setGradeForm(prev => ({ ...prev, written: event.target.value }))} />
-              </label>
-              <button className="btn btn-primary small-btn" type="submit" disabled={saving}>Guardar calificacion</button>
+              <button className="btn btn-primary small-btn" type="submit" disabled={saving}>Agregar classroom</button>
             </form>
+            <div className="stack-list section-gap">
+              {(data.classrooms || []).map(classroom => (
+                <div className="list-row" key={classroom.id}>
+                  <div>
+                    <strong>{classroom.name}</strong>
+                    <small>{classroom.active === false ? 'Inactivo' : 'Activo'}</small>
+                  </div>
+                </div>
+              ))}
+              {!data.classrooms?.length && <p className="empty-state">Aun no hay classrooms registrados.</p>}
+            </div>
           </section>
 
           <section className="panel-card admin-card">
@@ -372,8 +353,11 @@ function TeacherDashboard() {
               </label>
               <button className="btn btn-primary small-btn" type="submit">Guardar contrasena</button>
             </form>
-            {passwordMessage && <p className="system-message">{passwordMessage}</p>}
           </section>
+          <ActionMessageModal message={message || passwordMessage} onClose={() => {
+            if (message) setMessage('')
+            setPasswordMessage('')
+          }} />
         </main>
       </div>
     </div>

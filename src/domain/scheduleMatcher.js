@@ -1,4 +1,4 @@
-import { getLesson, getLevel } from './academicCatalog'
+import { getCanonicalLevelId, getLesson, getLevel } from './academicCatalog'
 import { hoursBetween, toDate } from './dateUtils'
 
 export const MEXICO_TIME_ZONE = 'America/Mexico_City'
@@ -108,6 +108,53 @@ export function buildMexicoDateTimeIso(dateValue, timeValue, durationHours = 0) 
   const date = new Date(`${dateValue}T${cleanTime}:00-06:00`)
   date.setHours(date.getHours() + durationHours)
   return date.toISOString()
+}
+
+export function addHoursToTimeValue(timeValue, hours = 1) {
+  const startMinutes = minutesFromTime(timeValue)
+  if (startMinutes === null) return ''
+
+  const totalMinutes = startMinutes + (Number(hours || 0) * 60)
+  const hour = Math.floor((totalMinutes % (24 * 60)) / 60)
+  const minute = totalMinutes % 60
+  return `${pad(hour)}:${pad(minute)}`
+}
+
+export function formatTimeLabel(timeValue) {
+  const totalMinutes = minutesFromTime(timeValue)
+  if (totalMinutes === null) return '-'
+
+  const hour = Math.floor(totalMinutes / 60)
+  const minute = totalMinutes % 60
+  const displayHour = hour % 12 || 12
+  const suffix = hour >= 12 ? 'p.m.' : 'a.m.'
+  return `${displayHour}:${pad(minute)} ${suffix}`
+}
+
+export function formatTimeRangeLabel(startTime, endTime) {
+  return `${formatTimeLabel(startTime)} - ${formatTimeLabel(endTime)}`
+}
+
+export function getNextClassProcessingSlot(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: MEXICO_TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(now)
+  const currentHour = Number(parts.find(part => part.type === 'hour')?.value || 0)
+  const nextHour = currentHour + 1
+  const date = nextHour >= 24
+    ? addDaysToDateInput(getMexicoDateInput(now), 1)
+    : getMexicoDateInput(now)
+  const time = `${pad(nextHour % 24)}:00`
+
+  return {
+    date,
+    time,
+    endTime: addHoursToTimeValue(time, 1),
+    label: formatTimeRangeLabel(time, addHoursToTimeValue(time, 1))
+  }
 }
 
 export function getClassDateValue(value) {
@@ -314,8 +361,9 @@ export function selectTeacherForSlot({ teachers = [], classes = [], date, time, 
 
 export function getRecommendedReservationLesson(student, recommendation, lessons = []) {
   const currentLesson = getLesson(student.currentLessonId, lessons)
+  const levelId = getCanonicalLevelId(student.currentLevelId)
   if (recommendation?.isBehind && currentLesson) return currentLesson
-  return recommendation?.nextLesson || currentLesson || lessons.find(lesson => lesson.levelId === student.currentLevelId) || null
+  return recommendation?.nextLesson || currentLesson || lessons.find(lesson => lesson.levelId === levelId) || null
 }
 
 function getClassRange(classItem) {

@@ -55,6 +55,15 @@ button {
   gap: 12px;
 }
 
+.brand-logo {
+  width: 46px;
+  height: 46px;
+  object-fit: contain;
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid rgba(94, 64, 51, 0.14);
+}
+
 .brand strong,
 .brand small {
   display: block;
@@ -121,16 +130,20 @@ p {
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, var(--gold-500), var(--gold-400));
-  color: var(--brown-900);
-  box-shadow: 0 12px 30px rgba(200, 155, 60, 0.3);
+  background: black;
+  color: white;
+  box-shadow: var(--shadow);
 }
 
-.btn-secondary,
+.btn-secondary {
+  background:  rgb(6, 60, 18);
+  border-color: rgba(255, 255, 255, 0.35);
+  color: rgb(255, 255, 255);
+}
 .btn-outline {
-  background: transparent;
-  border-color: rgba(200, 155, 60, 0.35);
-  color: var(--brown-900);
+  background:  rgb(0, 0, 0);
+  border-color: rgba(0, 0, 0, 0.35);
+  color: rgb(255, 255, 255) !important;
 }
 
 .full-width {
@@ -225,6 +238,152 @@ p {
 
 .hero-section {
   padding: 84px 0 56px;
+}
+
+.landing-system {
+  background:
+    linear-gradient(180deg, rgba(247, 241, 232, 0.96), rgba(238, 242, 245, 0.96)),
+    radial-gradient(circle at top right, rgba(223, 181, 91, 0.22), transparent 34%);
+}
+
+.system-hero {
+  padding-top: 70px;
+}
+
+.system-hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.95fr);
+  gap: 34px;
+  align-items: center;
+}
+
+.system-preview-card {
+  overflow: hidden;
+  border: 1px solid rgba(94, 64, 51, 0.16);
+  border-radius: 18px;
+  background: #fffaf4;
+  box-shadow: 0 26px 70px rgba(43, 29, 23, 0.16);
+}
+
+.showtime-cover {
+  position: relative;
+  min-height: 230px;
+  overflow: hidden;
+}
+
+.showtime-cover img {
+  width: 100%;
+  height: 260px;
+  display: block;
+  object-fit: cover;
+}
+
+.showtime-cover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(43, 29, 23, 0.1), rgba(43, 29, 23, 0.68));
+}
+
+.showtime-cover-overlay {
+  position: absolute;
+  inset: auto 18px 18px;
+  z-index: 1;
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 14px;
+  color: #fff;
+}
+
+.showtime-cover-overlay .brand strong,
+.showtime-cover-overlay .brand small {
+  color: #fff;
+}
+
+.showtime-cover-overlay .brand-logo {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.showtime-cover-overlay > span {
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 999px;
+  background: rgba(255, 250, 244, 0.14);
+  backdrop-filter: blur(10px);
+  font-weight: 800;
+}
+
+.showtime-panel {
+  padding: 18px;
+}
+
+.showtime-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(94, 64, 51, 0.14);
+}
+
+.showtime-status span {
+  color: var(--text-soft);
+}
+
+.showtime-status strong {
+  color: #1b6b4f;
+}
+
+.showtime-lines {
+  display: grid;
+  gap: 10px;
+}
+
+.showtime-line {
+  display: grid;
+  grid-template-columns: 86px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #d6dee8;
+  border-radius: 10px;
+  background:
+    linear-gradient(90deg, rgba(216, 174, 74, 0.12), transparent 44%),
+    #ffffff;
+}
+
+.showtime-line time {
+  font-weight: 900;
+  color: var(--brown-900);
+}
+
+.showtime-line strong,
+.showtime-line span {
+  display: block;
+}
+
+.showtime-line span {
+  margin-top: 3px;
+  color: var(--text-soft);
+}
+
+.showtime-line small {
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: #eaf4f1;
+  color: #1b6b4f;
+  font-weight: 800;
+}
+
+.system-band {
+  background: rgba(255, 250, 244, 0.72);
+}
+
+.system-feature-grid .feature-card,
+.system-timeline article {
+  border-radius: 8px;
 }
 
 .hero-grid,
@@ -444,6 +603,17 @@ p {
   align-items: start;
 }
 
+.contact-grid {
+  grid-template-columns: 0.9fr 1.1fr;
+  align-items: start;
+  font-size: large;
+}
+.contact-title {
+  font-size: clamp(2rem, 3vw, 3rem);
+  margin-bottom: 12px;
+}
+
+
 .timeline article {
   position: relative;
   padding: 20px 22px;
@@ -486,6 +656,18 @@ p {
 .footer-grid a {
   display: block;
   margin-bottom: 8px;
+}
+
+.site-footer .footer-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  padding: 10px 14px;
+  border: 1px solid rgba(223, 181, 91, 0.42);
+  border-radius: 999px;
+  color: #f7efe5;
+  font-weight: 800;
 }
 
 .auth-body {
@@ -581,6 +763,16 @@ p {
 }
 
 .text-link-button:hover {
+  color: var(--gold-500);
+}
+
+.underlined-auth-link {
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.underlined-auth-link:hover {
   color: var(--gold-500);
 }
 
@@ -1025,6 +1217,10 @@ p {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.compact-facts.three-columns {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .compact-facts.four-columns {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
@@ -1140,6 +1336,28 @@ p {
     flex-direction: column;
   }
 
+  .showtime-cover {
+    min-height: 190px;
+  }
+
+  .showtime-cover img {
+    height: 210px;
+  }
+
+  .showtime-cover-overlay,
+  .showtime-status {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .showtime-line {
+    grid-template-columns: 1fr;
+  }
+
+  .showtime-line small {
+    width: fit-content;
+  }
+
   .auth-showcase,
   .auth-panel,
   .dashboard-main {
@@ -1158,6 +1376,7 @@ p {
 
   .ai-workbench,
   .compact-facts.two-columns,
+  .compact-facts.three-columns,
   .compact-facts.four-columns {
     grid-template-columns: 1fr;
   }
@@ -1434,6 +1653,26 @@ p {
   align-items: center;
 }
 
+.classroom-row {
+  grid-template-columns: minmax(180px, 1fr) auto auto auto;
+}
+
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  color: #253041;
+  white-space: nowrap;
+}
+
+.inline-check input {
+  width: 16px;
+  min-height: 16px;
+  height: 16px;
+  padding: 0;
+}
+
 .record-list {
   display: grid;
   gap: 8px;
@@ -1597,6 +1836,40 @@ p {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 4px;
+}
+
+.lesson-history-checklist {
+  width: 100%;
+}
+
+.lesson-history-grid {
+  display: grid;
+  gap: 12px;
+  max-height: 360px;
+  overflow: auto;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.lesson-history-group {
+  display: grid;
+  gap: 6px;
+}
+
+.lesson-history-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  font-size: 0.84rem;
+  color: #253041;
+}
+
+.lesson-history-row input {
+  width: 16px;
+  min-height: 16px;
+  height: 16px;
+  padding: 0;
 }
 
 .lesson-check-row {
@@ -1771,6 +2044,10 @@ p {
   min-height: 36px;
 }
 
+.teacher-class-table .excel-row {
+  grid-template-columns: 150px 110px minmax(180px, 1fr) minmax(140px, 0.8fr) 80px 70px 120px;
+}
+
 .excel-row > span {
   min-height: 36px;
   padding: 8px;
@@ -1824,6 +2101,106 @@ p {
   background: #f8fafc;
 }
 
+.excel-scroll {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.payments-ledger-table {
+  min-width: 1180px;
+}
+
+.payments-ledger-table th:first-child,
+.payments-ledger-table td:first-child {
+  min-width: 90px;
+}
+
+.payments-ledger-table th:nth-child(2),
+.payments-ledger-table td:nth-child(2) {
+  min-width: 190px;
+}
+
+.table-tools {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(160px, 240px);
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.table-input {
+  width: 100%;
+  min-width: 80px;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid #c9d3de;
+  background: #ffffff;
+}
+
+.payment-month {
+  min-width: 118px;
+  padding: 0 !important;
+}
+
+.payment-month span,
+.payment-month small,
+.payment-check strong {
+  display: block;
+}
+
+.payment-cell-button {
+  display: grid;
+  width: 100%;
+  min-height: 96px;
+  gap: 4px;
+  padding: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.payment-cell-button:hover {
+  outline: 2px solid #2e90fa;
+  outline-offset: -2px;
+}
+
+.payment-month.paid {
+  background: #ecfdf3 !important;
+}
+
+.payment-month.overdue {
+  background: #fef3f2 !important;
+}
+
+.payment-month.pending {
+  background: #fffaf0 !important;
+}
+
+.payment-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+  color: #344054;
+}
+
+.payment-check input {
+  width: 16px;
+  min-height: 16px;
+  height: 16px;
+  padding: 0;
+  accent-color: #12b76a;
+}
+
+.payment-month.overdue .payment-cell-button strong {
+  color: #b42318;
+}
+
+.payment-month.paid .payment-cell-button strong {
+  color: #027a48;
+}
+
 .table-actions {
   display: flex;
   gap: 6px;
@@ -1846,7 +2223,187 @@ p {
   flex-direction: column;
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.modal-card {
+  width: min(980px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+}
+
+.action-message-modal {
+  width: min(460px, calc(100% - 28px));
+}
+
+.action-message-modal p {
+  margin: 0 0 18px;
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.ai-plan-modal {
+  width: min(1180px, 100%);
+}
+
+.ai-draft-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ai-draft-card {
+  border: 1px solid #b7c7d8;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.ai-draft-controls {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ai-student-picker {
+  margin-top: 10px;
+}
+
+.ai-draft-reason {
+  margin: 10px 0 0;
+  color: #415466;
+  font-size: 0.86rem;
+}
+
+.compact-select {
+  min-width: 160px;
+}
+
+.modal-warning {
+  border-color: #f4b183;
+  background: #fff2cc;
+  color: #7f5400;
+}
+
+.reservation-student-table {
+  min-width: 620px;
+}
+
+.showtime-screen {
+  min-height: 100vh;
+  padding: 24px;
+  background: #eef2f5;
+}
+
+.showtime-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 2px solid #9fb5c9;
+}
+
+.showtime-header h1 {
+  margin: 4px 0;
+  font-size: clamp(2rem, 4vw, 4.2rem);
+  line-height: 1;
+}
+
+.showtime-header p {
+  margin: 0;
+  font-size: clamp(1rem, 1.4vw, 1.5rem);
+}
+
+.showtime-clock {
+  display: grid;
+  min-width: 190px;
+  padding: 12px 16px;
+  border: 1px solid #9fb5c9;
+  background: #ffffff;
+  text-align: right;
+}
+
+.showtime-clock strong {
+  font-size: clamp(2rem, 3vw, 3.4rem);
+  line-height: 1;
+}
+
+.showtime-table-card {
+  padding: 0;
+  overflow: auto;
+}
+
+.showtime-hour-options {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.showtime-hour-options button {
+  display: grid;
+  gap: 4px;
+  min-width: 180px;
+  padding: 10px 12px;
+  border: 1px solid #9fb5c9;
+  background: #ffffff;
+  color: #18202b;
+  text-align: left;
+  cursor: pointer;
+}
+
+.showtime-hour-options button.active {
+  border-color: #2e90fa;
+  background: #dceaf7;
+}
+
+.showtime-hour-options small {
+  color: #475467;
+}
+
+.showtime-table {
+  font-size: clamp(0.9rem, 1.2vw, 1.35rem);
+}
+
+.showtime-table th,
+.showtime-table td {
+  padding: 12px;
+}
+
+.showtime-table td:nth-child(4) {
+  font-size: 1.1em;
+}
+
+.showtime-table small {
+  display: block;
+  margin-top: 4px;
+}
+
+.showtime-live-row td {
+  background: #ecfdf3 !important;
+}
+
+.showtime-students {
+  display: grid;
+  gap: 4px;
+}
+
+.showtime-students span {
+  display: block;
+  white-space: nowrap;
+}
+
 @media (max-width: 1024px) {
+  .system-hero-grid {
+    grid-template-columns: 1fr;
+  }
+
   .admin-workspace,
   .admin-two-pane,
   .attendance-layout {
@@ -1855,6 +2412,10 @@ p {
 
   .admin-form-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ai-draft-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -1865,6 +2426,7 @@ p {
 
   .admin-form-grid,
   .inline-form,
+  .table-tools,
   .teacher-row,
   .catalog-row,
   .catalog-row.lesson-row {
@@ -1886,6 +2448,7 @@ p {
   }
 
   .dashboard-main .top-grid,
+  .compact-facts.three-columns,
   .compact-facts.four-columns {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1975,6 +2538,7 @@ p {
 
   .admin-form-grid,
   .compact-facts.two-columns,
+  .compact-facts.three-columns,
   .compact-facts.four-columns,
   .dashboard-main .top-grid,
   .split-grid,

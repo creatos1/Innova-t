@@ -1,5 +1,6 @@
 import {
   getExpectedLessonOrder,
+  getCanonicalLevelId,
   getLesson,
   getLessonsByLevel,
   getLevel,
@@ -15,11 +16,12 @@ function getStudentPace(student, weeklySummary) {
 
 export function buildAcademicRecommendation(student, context = {}) {
   const { levels = [], lessons = [], scholarshipEvaluation } = context
-  const level = getLevel(student.currentLevelId, levels)
+  const levelId = getCanonicalLevelId(student.currentLevelId)
+  const level = getLevel(levelId, levels)
   const currentLesson = getLesson(student.currentLessonId, lessons)
-  const nextLesson = getNextLesson(student.currentLevelId, student.currentLessonId, lessons)
-  const levelLessons = getLessonsByLevel(student.currentLevelId, lessons)
-  const expectedOrder = getExpectedLessonOrder(student.progressPercent || 0, student.currentLevelId, lessons)
+  const nextLesson = getNextLesson(levelId, student.currentLessonId, lessons)
+  const levelLessons = getLessonsByLevel(levelId, lessons)
+  const expectedOrder = getExpectedLessonOrder(student.progressPercent || 0, levelId, lessons)
   const currentOrder = currentLesson?.order || 0
   const isBehind = currentOrder < expectedOrder - 1 || scholarshipEvaluation?.weekly?.missingHours >= 3
   const pace = getStudentPace(student, scholarshipEvaluation?.weekly)
@@ -46,7 +48,7 @@ export function buildAcademicRecommendation(student, context = {}) {
 
   return {
     studentId: student.id,
-    levelId: student.currentLevelId,
+    levelId,
     levelName: level?.shortName || 'Sin nivel',
     currentLesson,
     nextLesson,
@@ -92,14 +94,15 @@ export function buildSuggestedGroups(students = [], recommendations = [], levels
 
   students.forEach(student => {
     const recommendation = byStudentId.get(student.id)
-    const level = getLevel(student.currentLevelId, levels)
+    const levelId = getCanonicalLevelId(student.currentLevelId)
+    const level = getLevel(levelId, levels)
     const pace = recommendation?.pace || 'normal'
-    const key = `${student.currentLevelId}-${pace}`
+    const key = `${levelId}-${pace}`
 
     if (!groups.has(key)) {
       groups.set(key, {
         id: key,
-        levelId: student.currentLevelId,
+        levelId,
         levelName: level?.shortName || 'Sin nivel',
         pace,
         students: [],

@@ -23,9 +23,34 @@ export function formatDateTime(value) {
   return new Intl.DateTimeFormat('es-MX', {
     day: '2-digit',
     month: 'short',
+    hour12: true,
     hour: '2-digit',
     minute: '2-digit'
+  }).format(date).replace(/\s*a\.\s*m\./i, ' a.m.').replace(/\s*p\.\s*m\./i, ' p.m.')
+}
+
+export function formatMexicoDate(value) {
+  const date = toDate(value)
+  if (!date || Number.isNaN(date.getTime())) return '-'
+
+  return new Intl.DateTimeFormat('es-MX', {
+    timeZone: 'America/Mexico_City',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
   }).format(date)
+}
+
+export function formatMexicoTime(value) {
+  const date = toDate(value)
+  if (!date || Number.isNaN(date.getTime())) return '-'
+
+  return new Intl.DateTimeFormat('es-MX', {
+    timeZone: 'America/Mexico_City',
+    hour12: true,
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(date).replace(/\s*a\.\s*m\./i, ' a.m.').replace(/\s*p\.\s*m\./i, ' p.m.')
 }
 
 export function formatTime(value) {
@@ -33,9 +58,10 @@ export function formatTime(value) {
   if (!date || Number.isNaN(date.getTime())) return '-'
 
   return new Intl.DateTimeFormat('es-MX', {
+    hour12: true,
     hour: '2-digit',
     minute: '2-digit'
-  }).format(date)
+  }).format(date).replace(/\s*a\.\s*m\./i, ' a.m.').replace(/\s*p\.\s*m\./i, ' p.m.')
 }
 
 export function getWeekKey(value = new Date()) {

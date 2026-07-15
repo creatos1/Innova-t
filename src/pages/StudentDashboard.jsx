@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { updatePassword } from 'firebase/auth'
+import ActionMessageModal from '../components/ActionMessageModal'
+import BrandLogo from '../components/BrandLogo'
 import StatusBadge from '../components/StatusBadge'
 import { getLesson, getLevel } from '../domain/academicCatalog'
 import { formatDate, formatDateTime, toDate } from '../domain/dateUtils'
 import { getStudentViewModel } from '../domain/instituteState'
 import {
+  addHoursToTimeValue,
   buildAutoClassAssignment,
+  formatTimeLabel,
+  formatTimeRangeLabel,
   formatDateInputLabel,
   getClassDateValue,
   getConsecutiveReservationDurations,
@@ -16,6 +21,7 @@ import {
   isCancelableClass,
   isValidReservationSlot
 } from '../domain/scheduleMatcher'
+import { downloadPaymentReceipt } from '../services/paymentReceiptPdf'
 import { useInstituteData } from '../services/useInstituteData'
 
 const TABS = [
@@ -53,6 +59,17 @@ function getReservedClassHours(classItem) {
   return Number.isFinite(hours) ? Math.max(1, hours) : 1
 }
 
+function buildUntilOptions(startTime, durations = []) {
+  return durations.map(durationHours => {
+    const endTime = addHoursToTimeValue(startTime, durationHours)
+    return {
+      durationHours,
+      endTime,
+      label: formatTimeRangeLabel(startTime, endTime)
+    }
+  })
+}
+
 function StudentDashboard() {
   const {
     data,
@@ -67,11 +84,23 @@ function StudentDashboard() {
     reserveStudentClass,
     cancelStudentReservation
   } = useInstituteData()
-  const defaultSlot = useMemo(() => ({ ...getDefaultReservationSlot(), durationHours: 1 }), [])
+  const defaultSlot = useMemo(() => {
+    const slot = getDefaultReservationSlot()
+    return { ...slot, endTime: addHoursToTimeValue(slot.time, 1) }
+  }, [])
   const [activeTab, setActiveTab] = useState('reserve')
   const [selectedStudentId, setSelectedStudentId] = useState('')
   const [reservationForm, setReservationForm] = useState(defaultSlot)
   const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    if (loading || !profile) return
+    const role = profile.rol || profile.role
+    if (role === 'admin') navigate('/admin-dashboard/', { replace: true })
+    if (role === 'teacher') navigate('/teacher-dashboard/', { replace: true })
+  }, [loading, navigate, profile])
 
   useEffect(() => {
     if (profile?.studentId) {
@@ -119,6 +148,13 @@ function StudentDashboard() {
     getConsecutiveReservationDurations(reservationForm.date, reservationForm.time, new Date(), data.blockouts)
       .filter(hours => hours <= maxReservationHours)
   ), [data.blockouts, maxReservationHours, reservationForm.date, reservationForm.time])
+  const reservationUntilOptions = useMemo(() => (
+    buildUntilOptions(reservationForm.time, reservationDurations)
+  ), [reservationDurations, reservationForm.time])
+  const selectedReservationDuration = useMemo(() => {
+    const selected = reservationUntilOptions.find(option => option.endTime === reservationForm.endTime)
+    return selected?.durationHours || reservationUntilOptions[0]?.durationHours || 1
+  }, [reservationForm.endTime, reservationUntilOptions])
   const reservationPlan = useMemo(() => {
     if (!student) return null
 
@@ -129,12 +165,12 @@ function StudentDashboard() {
         data,
         date: reservationForm.date,
         time: reservationForm.time,
-        durationHours: reservationForm.durationHours
+        durationHours: selectedReservationDuration
       })
     } catch {
       return null
     }
-  }, [data, reservationForm.date, reservationForm.durationHours, reservationForm.time, student])
+  }, [data, reservationForm.date, reservationForm.time, selectedReservationDuration, student])
   const requireLogin = !loading && (!user || !profile)
   const noStudent = !loading && !student
 
@@ -148,16 +184,15 @@ function StudentDashboard() {
     setReservationForm(prev => ({
       ...prev,
       time: reservationTimes[0] || '',
-      durationHours: 1
+      endTime: addHoursToTimeValue(reservationTimes[0] || '', 1)
     }))
   }, [reservationForm.date, reservationForm.time, reservationTimes, tomorrowDate])
 
   useEffect(() => {
-    if (!reservationDurations.length) return
-    const currentDuration = Number(reservationForm.durationHours || 1)
-    if (reservationDurations.includes(currentDuration)) return
-    setReservationForm(prev => ({ ...prev, durationHours: reservationDurations[0] }))
-  }, [reservationDurations, reservationForm.durationHours])
+    if (!reservationUntilOptions.length) return
+    if (reservationUntilOptions.some(option => option.endTime === reservationForm.endTime)) return
+    setReservationForm(prev => ({ ...prev, endTime: reservationUntilOptions[0].endTime }))
+  }, [reservationForm.endTime, reservationUntilOptions])
 
   const canCancelClass = (classItem) => isCancelableClass(classItem.startAt)
 
@@ -165,18 +200,18 @@ function StudentDashboard() {
     event.preventDefault()
     try {
       if (remainingDayHours <= 0) {
-        setMessage('Ya tienes 3 horas reservadas para manana.')
+        setMessage('Ya tienes 3 horas reservadas para ese dia.')
         return
       }
       if (hasReservedBlockForDate) {
-        setMessage('Ya tienes un bloque reservado para manana. Cancela ese bloque si necesitas cambiar la duracion.')
+        setMessage('Ya tienes un bloque reservado para ese dia. Cancela ese bloque si necesitas cambiar el rango.')
         return
       }
       if (remainingWeekHours <= 0) {
         setMessage('Ya tienes las 6 horas de esta semana. Se reinicia el domingo.')
         return
       }
-      if (!reservationDurations.includes(Number(reservationForm.durationHours || 1))) {
+      if (!reservationDurations.includes(selectedReservationDuration)) {
         setMessage('Elige un bloque disponible de 1 a 3 horas seguidas.')
         return
       }
@@ -187,7 +222,7 @@ function StudentDashboard() {
         data,
         date: reservationForm.date,
         time: reservationForm.time,
-        durationHours: reservationForm.durationHours
+        durationHours: selectedReservationDuration
       })
       await reserveStudentClass(assignment)
     } catch (error) {
@@ -206,15 +241,29 @@ function StudentDashboard() {
       setMessage('La nueva contrasena debe tener minimo 6 caracteres.')
       return
     }
+    if (newPassword !== confirmPassword) {
+      setMessage('La confirmacion de contrasena no coincide.')
+      return
+    }
 
     try {
       await updatePassword(user, newPassword)
       setNewPassword('')
+      setConfirmPassword('')
       setMessage('Contrasena actualizada.')
     } catch (error) {
       setMessage(error.code === 'auth/requires-recent-login'
         ? 'Por seguridad, cierra sesion, vuelve a entrar y cambia la contrasena de nuevo.'
         : error.message || 'No se pudo cambiar la contrasena.')
+    }
+  }
+
+  const downloadReceipt = async (payment) => {
+    try {
+      await downloadPaymentReceipt({ student, payment })
+    } catch (error) {
+      console.warn(error)
+      setMessage('No se pudo descargar el recibo. Intenta nuevamente.')
     }
   }
 
@@ -250,9 +299,9 @@ function StudentDashboard() {
         <main className="dashboard-main auth-required">
           <section className="panel-card admin-card">
             <h1>No hay estudiante vinculado</h1>
-            <p>El usuario necesita studentId en usuarios/{profile?.uid}.</p>
-            {message && <p className="system-message">{message}</p>}
+            <p>Este acceso todavia no esta conectado a un perfil de alumno. Pide al administrador que revise el registro.</p>
           </section>
+          <ActionMessageModal message={message} onClose={() => setMessage('')} />
         </main>
       </div>
     )
@@ -269,23 +318,15 @@ function StudentDashboard() {
         <div className="admin-section-title">
           <div>
             <h2>Reservar clase</h2>
-            <p>Solo puedes reservar para manana. La semana se reinicia cada domingo.</p>
+            <p>Reserva de 1 a 3 horas por dia sin pasar 6 horas por semana.</p>
           </div>
-          <StatusBadge severity="info">{reservationForm.durationHours || 1} h</StatusBadge>
+          <StatusBadge severity="info">{selectedReservationDuration} h</StatusBadge>
         </div>
 
         <dl className="compact-facts four-columns">
           <div>
-            <dt>Nivel</dt>
+            <dt>Nivel actual</dt>
             <dd>{currentLevel?.shortName || '-'}</dd>
-          </div>
-          <div>
-            <dt>Fecha</dt>
-            <dd>{formatDateInputLabel(tomorrowDate)}</dd>
-          </div>
-          <div>
-            <dt>Manana</dt>
-            <dd>{dayReservedHours}/3 horas</dd>
           </div>
           <div>
             <dt>Semana</dt>
@@ -299,27 +340,17 @@ function StudentDashboard() {
 
         <form className="admin-form-grid section-gap" onSubmit={reserveClass}>
           <label className="form-field">
-            <span>Fecha</span>
-            <input
-              type="date"
-              value={reservationForm.date}
-              min={tomorrowDate}
-              max={tomorrowDate}
-              onChange={() => setReservationForm(prev => ({ ...prev, date: tomorrowDate }))}
-              readOnly
-              required
-            />
-          </label>
-          <label className="form-field">
             <span>Hora</span>
             <select value={reservationForm.time} onChange={event => setReservationForm(prev => ({ ...prev, time: event.target.value }))} required>
-              {reservationTimes.map(time => <option value={time} key={time}>{time}</option>)}
+              {reservationTimes.map(time => <option value={time} key={time}>{formatTimeLabel(time)}</option>)}
             </select>
           </label>
           <label className="form-field">
-            <span>Duracion</span>
-            <select value={reservationForm.durationHours} onChange={event => setReservationForm(prev => ({ ...prev, durationHours: Number(event.target.value) }))} required>
-              {reservationDurations.map(hours => <option value={hours} key={hours}>{hours} {hours === 1 ? 'hora' : 'horas'}</option>)}
+            <span>Hasta</span>
+            <select value={reservationForm.endTime || ''} onChange={event => setReservationForm(prev => ({ ...prev, endTime: event.target.value }))} required>
+              {reservationUntilOptions.map(option => (
+                <option value={option.endTime} key={option.endTime}>{option.label}</option>
+              ))}
             </select>
           </label>
           <button className="btn btn-primary small-btn" type="submit" disabled={saving || !reservationPlan || !reservationDurations.length || hasReservedBlockForDate || remainingDayHours <= 0 || remainingWeekHours <= 0}>
@@ -327,8 +358,8 @@ function StudentDashboard() {
           </button>
         </form>
 
-        {!reservationTimes.length && <p className="empty-state section-gap">No hay horarios disponibles para reservar manana.</p>}
-        {hasReservedBlockForDate && <p className="empty-state section-gap">Ya tienes un bloque reservado para manana. Para cambiarlo, cancela el bloque actual y reserva de nuevo.</p>}
+        {!reservationTimes.length && <p className="empty-state section-gap">No hay horarios disponibles para reservar.</p>}
+        {hasReservedBlockForDate && <p className="empty-state section-gap">Ya tienes un bloque reservado para ese dia. Para cambiarlo, cancela el bloque actual y reserva de nuevo.</p>}
         {!!reservationTimes.length && !reservationDurations.length && <p className="empty-state section-gap">No hay un bloque seguido disponible en ese horario o ya llegaste al limite diario/semanal.</p>}
         {remainingWeekHours <= 0 && <p className="empty-state section-gap">Ya completaste tus 6 horas de la semana.</p>}
       </article>
@@ -344,26 +375,26 @@ function StudentDashboard() {
           <thead>
             <tr>
               <th>Fecha</th>
+              <th>Accion</th>
               <th>Clase</th>
               <th>Teacher</th>
               <th>Horas</th>
               <th>Estatus</th>
-              <th>Accion</th>
             </tr>
           </thead>
           <tbody>
             {upcomingClasses.map(classItem => (
               <tr key={classItem.id}>
                 <td>{formatDateTime(classItem.startAt)}</td>
-                <td>{getLesson(classItem.lessonIds?.[0], data.lessons)?.name || classItem.lessonName || 'Pendiente'}</td>
-                <td>{classItem.teacherName || 'Pendiente admin'}</td>
-                <td>{getReservedClassHours(classItem)}</td>
-                <td>{getEffectiveClassStatus(classItem)}</td>
                 <td>
                   <button className="btn btn-secondary small-btn" type="button" onClick={() => cancelClass(classItem)} disabled={!canCancelClass(classItem)}>
                     {canCancelClass(classItem) ? 'Cancelar' : 'Cerrado'}
                   </button>
                 </td>
+                <td>{getLesson(classItem.lessonIds?.[0], data.lessons)?.name || classItem.lessonName || 'Pendiente'}</td>
+                <td>{classItem.teacherName || 'Pendiente admin'}</td>
+                <td>{getReservedClassHours(classItem)}</td>
+                <td>{getEffectiveClassStatus(classItem)}</td>
               </tr>
             ))}
             {!upcomingClasses.length && (
@@ -435,6 +466,10 @@ function StudentDashboard() {
             <span>Nueva contrasena</span>
             <input type="password" value={newPassword} onChange={event => setNewPassword(event.target.value)} placeholder="Minimo 6 caracteres" />
           </label>
+          <label className="form-field span-2">
+            <span>Confirmar contrasena</span>
+            <input type="password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} placeholder="Repite tu contrasena" />
+          </label>
           <button className="btn btn-primary small-btn" type="submit">Guardar contrasena</button>
         </form>
       </article>
@@ -494,6 +529,7 @@ function StudentDashboard() {
             <th>Limite</th>
             <th>Monto</th>
             <th>Estatus</th>
+            <th>Recibo</th>
           </tr>
         </thead>
         <tbody>
@@ -503,11 +539,16 @@ function StudentDashboard() {
               <td>{formatDateSafe(payment.dueDate)}</td>
               <td>${payment.amount || 0}</td>
               <td>{payment.status || 'pendiente'}</td>
+              <td>
+                <button className="btn btn-secondary small-btn" type="button" onClick={() => downloadReceipt(payment)} disabled={payment.status !== 'pagado' && !payment.paidAt}>
+                  Descargar PDF
+                </button>
+              </td>
             </tr>
           ))}
           {!payments.length && (
             <tr>
-              <td colSpan="4">Aun no hay pagos registrados.</td>
+              <td colSpan="5">Aun no hay pagos registrados.</td>
             </tr>
           )}
         </tbody>
@@ -563,13 +604,7 @@ function StudentDashboard() {
     <div className="dashboard-body admin-system excel-system">
       <div className="dashboard-shell">
         <aside className="sidebar admin-sidebar">
-          <Link className="brand" to="/">
-            <span className="brand-mark">IT</span>
-            <span>
-              <strong>Innova-T</strong>
-              <small>Student Panel</small>
-            </span>
-          </Link>
+          <BrandLogo panel="Student Panel" />
 
           <nav className="sidebar-nav admin-tabs-nav">
             {TABS.map(tab => (
@@ -598,10 +633,10 @@ function StudentDashboard() {
             </div>
           </header>
 
-          {message && <p className="system-message">{message}</p>}
           <section className="admin-active-panel">
             {renderActiveTab()}
           </section>
+          <ActionMessageModal message={message} onClose={() => setMessage('')} />
         </main>
       </div>
     </div>

@@ -6,6 +6,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   query,
   serverTimestamp,
@@ -15,7 +16,12 @@ import {
   writeBatch
 } from 'firebase/firestore'
 import { db } from '../firebase'
-import { ACADEMIC_LEVELS, LESSONS } from '../domain/academicCatalog'
+import {
+  ACADEMIC_LEVELS,
+  LESSONS,
+  isLegacyCatalogLevelId,
+  isLegacyLessonId
+} from '../domain/academicCatalog'
 
 const COLLECTIONS = {
   students: 'estudiantes',
@@ -23,6 +29,7 @@ const COLLECTIONS = {
   levels: 'niveles',
   lessons: 'lecciones',
   teachers: 'teachers',
+  classrooms: 'classrooms',
   loginIds: 'loginIds',
   classes: 'clases',
   attendance: 'asistencias',
@@ -30,7 +37,8 @@ const COLLECTIONS = {
   grades: 'calificaciones',
   alerts: 'becaEventos',
   blockouts: 'bloqueos',
-  aiRecommendations: 'aiRecommendations'
+  aiRecommendations: 'aiRecommendations',
+  authDeletionRequests: 'authDeletionRequests'
 }
 
 export const EMPTY_INSTITUTE_DATA = {
@@ -39,6 +47,7 @@ export const EMPTY_INSTITUTE_DATA = {
   levels: [],
   lessons: [],
   teachers: [],
+  classrooms: [],
   classes: [],
   attendance: [],
   payments: [],
@@ -55,6 +64,12 @@ export const DEFAULT_TEACHERS = [
   { id: 'fabian', publicId: 'T-005', name: 'Fabian', email: 'fabian@innova-t.com' }
 ]
 
+export const DEFAULT_CLASSROOMS = [
+  { id: 'classroom-1', name: 'Classroom 1', active: true },
+  { id: 'classroom-2', name: 'Classroom 2', active: true },
+  { id: 'classroom-3', name: 'Classroom 3', active: true }
+]
+
 function docsFromSnapshot(snapshot) {
   return snapshot.docs.map(item => ({
     id: item.id,
@@ -64,6 +79,21 @@ function docsFromSnapshot(snapshot) {
 
 function getRole(profile) {
   return profile?.rol || profile?.role || ''
+}
+
+function getPreviousLessonIds(currentLessonId) {
+  const cleanLessonId = String(currentLessonId || '').trim()
+  const currentLesson = LESSONS.find(lesson => (
+    lesson.id === cleanLessonId
+    || lesson.code === cleanLessonId.toUpperCase()
+  ))
+
+  if (!currentLesson?.globalOrder) return []
+
+  return LESSONS
+    .filter(lesson => lesson.globalOrder && lesson.globalOrder < currentLesson.globalOrder)
+    .sort((a, b) => a.globalOrder - b.globalOrder)
+    .map(lesson => lesson.id)
 }
 
 function isStaff(profile) {
@@ -90,6 +120,40 @@ function subscribeDocAsList(path, id, onValue, onError) {
   )
 }
 
+function mergeCatalogDocs(key, docs) {
+  if (key === 'levels') {
+    const byId = new Map(ACADEMIC_LEVELS.map(level => [level.id, level]))
+
+    docs.forEach(item => {
+      if (!isLegacyCatalogLevelId(item.id)) {
+        byId.set(item.id, {
+          ...(byId.get(item.id) || {}),
+          ...item
+        })
+      }
+    })
+
+    return Array.from(byId.values())
+  }
+
+  if (key === 'lessons') {
+    const byId = new Map(LESSONS.map(lesson => [lesson.id, lesson]))
+
+    docs.forEach(item => {
+      if (!isLegacyLessonId(item.id)) {
+        byId.set(item.id, {
+          ...(byId.get(item.id) || {}),
+          ...item
+        })
+      }
+    })
+
+    return Array.from(byId.values())
+  }
+
+  return docs
+}
+
 export function subscribeInstituteData({ profile, onData, onError }) {
   const state = { ...EMPTY_INSTITUTE_DATA }
   const emit = () => onData({ ...state })
@@ -97,7 +161,7 @@ export function subscribeInstituteData({ profile, onData, onError }) {
 
   const attach = (key, target) => {
     unsubs.push(subscribeCollection(target, value => {
-      state[key] = value
+      state[key] = mergeCatalogDocs(key, value)
       emit()
     }, onError))
   }
@@ -105,6 +169,7 @@ export function subscribeInstituteData({ profile, onData, onError }) {
   attach('levels', collection(db, COLLECTIONS.levels))
   attach('lessons', collection(db, COLLECTIONS.lessons))
   attach('teachers', collection(db, COLLECTIONS.teachers))
+  attach('classrooms', collection(db, COLLECTIONS.classrooms))
   attach('classes', collection(db, COLLECTIONS.classes))
   attach('blockouts', collection(db, COLLECTIONS.blockouts))
 
@@ -118,7 +183,7 @@ export function subscribeInstituteData({ profile, onData, onError }) {
     const studentId = getStudentId(profile)
 
     if (!studentId) {
-      onError(new Error('El usuario estudiante no tiene studentId en usuarios/{uid}.'))
+      onError(new Error('Tu acceso de alumno no esta vinculado a un perfil. Pide al admin revisarlo.'))
       emit()
       return () => unsubs.forEach(unsub => unsub())
     }
@@ -156,6 +221,46 @@ function normalizeDocumentId(value) {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
+}
+
+function normalizePublicId(value) {
+  return String(value || '').trim().toUpperCase().replace(/\s+/g, '')
+}
+
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function getPublicIdDocumentId(publicId) {
+  return normalizePublicId(publicId).replace(/\//g, '-')
+}
+
+async function commitBatchOperations(operations = []) {
+  for (let index = 0; index < operations.length; index += 450) {
+    const batch = writeBatch(db)
+    operations.slice(index, index + 450).forEach(operation => operation(batch))
+    await batch.commit()
+  }
+}
+
+async function getDocsForField(collectionName, fieldName, operator, value) {
+  const snapshot = await getDocs(query(collection(db, collectionName), where(fieldName, operator, value)))
+  return snapshot.docs
+}
+
+function enqueueAuthDeletion(operations, payload) {
+  if (!payload?.uid) return
+
+  operations.push(batch => batch.set(doc(db, COLLECTIONS.authDeletionRequests, payload.uid), {
+    uid: payload.uid,
+    email: payload.email || '',
+    role: payload.role || '',
+    sourceId: payload.sourceId || '',
+    publicId: payload.publicId || '',
+    status: 'pending',
+    requestedAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  }, { merge: true }))
 }
 
 export async function initializeAcademicCatalog() {
@@ -205,17 +310,40 @@ export async function initializeTeachers() {
   await batch.commit()
 }
 
+export async function initializeClassrooms() {
+  const batch = writeBatch(db)
+
+  DEFAULT_CLASSROOMS.forEach(classroom => {
+    batch.set(doc(db, COLLECTIONS.classrooms, classroom.id), {
+      ...classroom,
+      updatedAt: serverTimestamp()
+    }, { merge: true })
+  })
+
+  await batch.commit()
+}
+
 export async function createStudentRecord(payload) {
-  const studentRef = doc(collection(db, COLLECTIONS.students))
-  const publicId = String(payload.publicId || '').trim().toUpperCase()
+  const publicId = normalizePublicId(payload.publicId)
+  const email = normalizeEmail(payload.email)
+  const completedLessonIds = getPreviousLessonIds(payload.currentLessonId)
+  const studentDocId = getPublicIdDocumentId(publicId) || doc(collection(db, COLLECTIONS.students)).id
+  const studentRef = doc(db, COLLECTIONS.students, studentDocId)
+  const existingStudent = await getDoc(studentRef)
+
+  if (existingStudent.exists()) {
+    throw new Error(`Ya existe un estudiante con ID ${publicId}. Abre su perfil para editarlo.`)
+  }
+
   await setDoc(studentRef, {
     id: studentRef.id,
     publicId,
     fullName: payload.fullName,
-    email: payload.email || '',
+    email,
     phone: payload.phone || '',
     currentLevelId: payload.currentLevelId,
     currentLessonId: payload.currentLessonId,
+    completedLessonIds,
     enrollmentDate: payload.enrollmentDate,
     ...(payload.uid ? { uid: payload.uid } : {}),
     status: payload.status || 'activo',
@@ -226,12 +354,12 @@ export async function createStudentRecord(payload) {
     updatedAt: serverTimestamp()
   })
 
-  if (publicId && payload.email) {
+  if (publicId && email) {
     await setDoc(doc(db, COLLECTIONS.loginIds, publicId), {
       publicId,
       studentId: studentRef.id,
       role: 'estudiante',
-      email: payload.email,
+      email,
       fullName: payload.fullName || '',
       ...(payload.uid ? { uid: payload.uid } : {}),
       updatedAt: serverTimestamp()
@@ -241,7 +369,7 @@ export async function createStudentRecord(payload) {
   if (payload.uid) {
     await setDoc(doc(db, COLLECTIONS.users, payload.uid), {
       uid: payload.uid,
-      email: payload.email || '',
+      email,
       rol: 'estudiante',
       nombre: payload.fullName || '',
       studentId: studentRef.id,
@@ -254,11 +382,13 @@ export async function createStudentRecord(payload) {
 }
 
 export async function updateStudentRecord(studentId, payload) {
-  const publicId = String(payload.publicId || '').trim().toUpperCase()
-  await updateDoc(doc(db, COLLECTIONS.students, studentId), {
+  const publicId = normalizePublicId(payload.publicId)
+  const email = normalizeEmail(payload.email)
+  const completedLessonIds = getPreviousLessonIds(payload.currentLessonId)
+  const updatePayload = {
     publicId,
     fullName: payload.fullName,
-    email: payload.email || '',
+    email,
     phone: payload.phone || '',
     currentLevelId: payload.currentLevelId,
     currentLessonId: payload.currentLessonId,
@@ -268,14 +398,20 @@ export async function updateStudentRecord(studentId, payload) {
     progressPercent: Number(payload.progressPercent || 0),
     searchName: (payload.fullName || '').toLowerCase(),
     updatedAt: serverTimestamp()
-  })
+  }
 
-  if (publicId && payload.email) {
+  if (completedLessonIds.length) {
+    updatePayload.completedLessonIds = arrayUnion(...completedLessonIds)
+  }
+
+  await updateDoc(doc(db, COLLECTIONS.students, studentId), updatePayload)
+
+  if (publicId && email) {
     await setDoc(doc(db, COLLECTIONS.loginIds, publicId), {
       publicId,
       studentId,
       role: 'estudiante',
-      email: payload.email,
+      email,
       fullName: payload.fullName || '',
       updatedAt: serverTimestamp()
     }, { merge: true })
@@ -283,10 +419,64 @@ export async function updateStudentRecord(studentId, payload) {
 }
 
 export async function deleteStudentRecord(studentId, publicId = '') {
-  await deleteDoc(doc(db, COLLECTIONS.students, studentId))
-  if (publicId) {
-    await deleteDoc(doc(db, COLLECTIONS.loginIds, String(publicId).trim().toUpperCase()))
+  const studentRef = doc(db, COLLECTIONS.students, studentId)
+  const studentSnapshot = await getDoc(studentRef)
+  const student = studentSnapshot.exists() ? studentSnapshot.data() : {}
+  const cleanPublicId = normalizePublicId(publicId || student.publicId)
+  const loginSnapshot = cleanPublicId ? await getDoc(doc(db, COLLECTIONS.loginIds, cleanPublicId)) : null
+  const loginData = loginSnapshot?.exists() ? loginSnapshot.data() : {}
+  const uid = student.uid || loginData.uid || ''
+  const operations = []
+
+  operations.push(batch => batch.delete(studentRef))
+
+  if (cleanPublicId) {
+    operations.push(batch => batch.delete(doc(db, COLLECTIONS.loginIds, cleanPublicId)))
   }
+
+  if (uid) {
+    operations.push(batch => batch.delete(doc(db, COLLECTIONS.users, uid)))
+    enqueueAuthDeletion(operations, {
+      uid,
+      email: student.email || loginData.email || '',
+      role: 'estudiante',
+      sourceId: studentId,
+      publicId: cleanPublicId
+    })
+  }
+
+  const relatedCollections = [
+    COLLECTIONS.attendance,
+    COLLECTIONS.payments,
+    COLLECTIONS.grades,
+    COLLECTIONS.alerts,
+    COLLECTIONS.aiRecommendations
+  ]
+
+  for (const collectionName of relatedCollections) {
+    const relatedDocs = await getDocsForField(collectionName, 'studentId', '==', studentId)
+    relatedDocs.forEach(snapshot => {
+      operations.push(batch => batch.delete(snapshot.ref))
+    })
+  }
+
+  const classDocs = await getDocsForField(COLLECTIONS.classes, 'studentIds', 'array-contains', studentId)
+  classDocs.forEach(snapshot => {
+    const classItem = snapshot.data()
+    const remainingStudentIds = (classItem.studentIds || []).filter(id => id !== studentId)
+
+    if (!remainingStudentIds.length) {
+      operations.push(batch => batch.delete(snapshot.ref))
+      return
+    }
+
+    operations.push(batch => batch.update(snapshot.ref, {
+      studentIds: remainingStudentIds,
+      updatedAt: serverTimestamp()
+    }))
+  })
+
+  await commitBatchOperations(operations)
 }
 
 export async function createClassRecord(payload) {
@@ -303,7 +493,9 @@ export async function createClassRecord(payload) {
     endAt: payload.endAt,
     durationHours: Number(payload.durationHours || 1),
     studentIds: payload.studentIds || [],
-    room: payload.room || 'Por definir',
+    classroomId: payload.classroomId || '',
+    classroomName: payload.classroomName || payload.room || '',
+    room: payload.room || payload.classroomName || 'Por definir',
     mode: payload.mode || 'presencial',
     status: payload.status || 'programada',
     reservationSource: payload.reservationSource || 'admin-manual',
@@ -328,7 +520,9 @@ export async function updateClassRecord(classId, payload) {
     endAt: payload.endAt,
     durationHours: Number(payload.durationHours || 1),
     studentIds: payload.studentIds || [],
-    room: payload.room || 'Por definir',
+    classroomId: payload.classroomId || '',
+    classroomName: payload.classroomName || payload.room || '',
+    room: payload.room || payload.classroomName || 'Por definir',
     mode: payload.mode || 'presencial',
     status: payload.status || 'programada',
     reservationSource: payload.reservationSource || 'admin-manual',
@@ -355,6 +549,31 @@ export async function createBlockoutRecord(payload) {
 
 export async function deleteBlockoutRecord(blockoutId) {
   await deleteDoc(doc(db, COLLECTIONS.blockouts, blockoutId))
+}
+
+export async function createClassroomRecord(payload) {
+  const id = normalizeDocumentId(payload.id || payload.name) || doc(collection(db, COLLECTIONS.classrooms)).id
+  await setDoc(doc(db, COLLECTIONS.classrooms, id), {
+    id,
+    name: payload.name,
+    active: payload.active !== false,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  }, { merge: true })
+  return id
+}
+
+export async function updateClassroomRecord(classroomId, payload) {
+  await setDoc(doc(db, COLLECTIONS.classrooms, classroomId), {
+    id: classroomId,
+    name: payload.name,
+    active: payload.active !== false,
+    updatedAt: serverTimestamp()
+  }, { merge: true })
+}
+
+export async function deleteClassroomRecord(classroomId) {
+  await deleteDoc(doc(db, COLLECTIONS.classrooms, classroomId))
 }
 
 export async function updateClassRosterRecord(classId, studentIds = []) {
@@ -424,7 +643,26 @@ export async function reserveStudentClassRecord(assignment) {
 }
 
 export async function cancelStudentReservationRecord(classId, studentId) {
-  await updateDoc(doc(db, COLLECTIONS.classes, classId), {
+  const classRef = doc(db, COLLECTIONS.classes, classId)
+  const classSnapshot = await getDoc(classRef)
+
+  if (classSnapshot.exists()) {
+    const classItem = classSnapshot.data()
+    const studentIds = classItem.studentIds || []
+    const isOnlyStudent = studentIds.length === 1 && studentIds[0] === studentId
+
+    if (
+      isOnlyStudent
+      && classItem.reservationSource === 'student-auto'
+      && classItem.status === 'pendiente_asignacion'
+      && !classItem.teacherId
+    ) {
+      await deleteDoc(classRef)
+      return
+    }
+  }
+
+  await updateDoc(classRef, {
     studentIds: arrayRemove(studentId),
     updatedAt: serverTimestamp()
   })
@@ -516,25 +754,26 @@ export async function createAttendanceRecords(records = []) {
 export async function createTeacherRecord(payload) {
   const name = payload.name.trim()
   const id = normalizeTeacherId(name) || doc(collection(db, COLLECTIONS.teachers)).id
-  const publicId = String(payload.publicId || '').trim().toUpperCase()
+  const publicId = normalizePublicId(payload.publicId)
+  const email = normalizeEmail(payload.email)
 
   await setDoc(doc(db, COLLECTIONS.teachers, id), {
     id,
     publicId,
     name,
-    email: payload.email || '',
+    email,
     ...(payload.uid ? { uid: payload.uid } : {}),
     active: true,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   }, { merge: true })
 
-  if (publicId && payload.email) {
+  if (publicId && email) {
     await setDoc(doc(db, COLLECTIONS.loginIds, publicId), {
       publicId,
       teacherId: id,
       role: 'teacher',
-      email: payload.email,
+      email,
       name,
       ...(payload.uid ? { uid: payload.uid } : {}),
       updatedAt: serverTimestamp()
@@ -544,7 +783,7 @@ export async function createTeacherRecord(payload) {
   if (payload.uid) {
     await setDoc(doc(db, COLLECTIONS.users, payload.uid), {
       uid: payload.uid,
-      email: payload.email || '',
+      email,
       rol: 'teacher',
       nombre: name,
       teacherId: id,
@@ -558,20 +797,21 @@ export async function createTeacherRecord(payload) {
 
 export async function updateTeacherRecord(teacherId, payload) {
   const name = payload.name.trim()
-  const publicId = String(payload.publicId || '').trim().toUpperCase()
+  const publicId = normalizePublicId(payload.publicId)
+  const email = normalizeEmail(payload.email)
   await updateDoc(doc(db, COLLECTIONS.teachers, teacherId), {
     publicId,
     name,
-    email: payload.email || '',
+    email,
     updatedAt: serverTimestamp()
   })
 
-  if (publicId && payload.email) {
+  if (publicId && email) {
     await setDoc(doc(db, COLLECTIONS.loginIds, publicId), {
       publicId,
       teacherId,
       role: 'teacher',
-      email: payload.email,
+      email,
       name,
       ...(payload.uid ? { uid: payload.uid } : {}),
       updatedAt: serverTimestamp()
@@ -580,7 +820,7 @@ export async function updateTeacherRecord(teacherId, payload) {
 
   if (payload.uid) {
     await setDoc(doc(db, COLLECTIONS.users, payload.uid), {
-      email: payload.email || '',
+      email,
       rol: 'teacher',
       nombre: name,
       teacherId,
@@ -591,10 +831,51 @@ export async function updateTeacherRecord(teacherId, payload) {
 }
 
 export async function deleteTeacherRecord(teacherId, publicId = '') {
-  await deleteDoc(doc(db, COLLECTIONS.teachers, teacherId))
-  if (publicId) {
-    await deleteDoc(doc(db, COLLECTIONS.loginIds, String(publicId).trim().toUpperCase()))
+  const teacherRef = doc(db, COLLECTIONS.teachers, teacherId)
+  const teacherSnapshot = await getDoc(teacherRef)
+  const teacher = teacherSnapshot.exists() ? teacherSnapshot.data() : {}
+  const cleanPublicId = normalizePublicId(publicId || teacher.publicId)
+  const loginSnapshot = cleanPublicId ? await getDoc(doc(db, COLLECTIONS.loginIds, cleanPublicId)) : null
+  const loginData = loginSnapshot?.exists() ? loginSnapshot.data() : {}
+  const uid = teacher.uid || loginData.uid || ''
+  const operations = []
+
+  operations.push(batch => batch.delete(teacherRef))
+
+  if (cleanPublicId) {
+    operations.push(batch => batch.delete(doc(db, COLLECTIONS.loginIds, cleanPublicId)))
   }
+
+  if (uid) {
+    operations.push(batch => batch.delete(doc(db, COLLECTIONS.users, uid)))
+    enqueueAuthDeletion(operations, {
+      uid,
+      email: teacher.email || loginData.email || '',
+      role: 'teacher',
+      sourceId: teacherId,
+      publicId: cleanPublicId
+    })
+  }
+
+  const classDocsById = new Map()
+  const teacherClassDocs = await getDocsForField(COLLECTIONS.classes, 'teacherId', '==', teacherId)
+  teacherClassDocs.forEach(snapshot => classDocsById.set(snapshot.id, snapshot))
+
+  if (teacher.name) {
+    const teacherNameClassDocs = await getDocsForField(COLLECTIONS.classes, 'teacherName', '==', teacher.name)
+    teacherNameClassDocs.forEach(snapshot => classDocsById.set(snapshot.id, snapshot))
+  }
+
+  classDocsById.forEach(snapshot => {
+    operations.push(batch => batch.update(snapshot.ref, {
+      teacherId: '',
+      teacherName: '',
+      status: 'pendiente_asignacion',
+      updatedAt: serverTimestamp()
+    }))
+  })
+
+  await commitBatchOperations(operations)
 }
 
 export async function createLevelRecord(payload) {
@@ -613,7 +894,8 @@ export async function createLevelRecord(payload) {
 }
 
 export async function updateLevelRecord(levelId, payload) {
-  await updateDoc(doc(db, COLLECTIONS.levels, levelId), {
+  await setDoc(doc(db, COLLECTIONS.levels, levelId), {
+    id: levelId,
     order: Number(payload.order || 0),
     name: payload.name,
     shortName: payload.shortName || payload.name,
@@ -621,7 +903,7 @@ export async function updateLevelRecord(levelId, payload) {
     targetLessons: Number(payload.targetLessons || 0),
     description: payload.description || '',
     updatedAt: serverTimestamp()
-  })
+  }, { merge: true })
 }
 
 export async function deleteLevelRecord(levelId) {
@@ -644,7 +926,8 @@ export async function createLessonRecord(payload) {
 }
 
 export async function updateLessonRecord(lessonId, payload) {
-  await updateDoc(doc(db, COLLECTIONS.lessons, lessonId), {
+  await setDoc(doc(db, COLLECTIONS.lessons, lessonId), {
+    id: lessonId,
     levelId: payload.levelId,
     order: Number(payload.order || 1),
     name: payload.name,
@@ -652,7 +935,7 @@ export async function updateLessonRecord(lessonId, payload) {
     activities: payload.activities || [],
     objectives: payload.objectives || [],
     updatedAt: serverTimestamp()
-  })
+  }, { merge: true })
 }
 
 export async function deleteLessonRecord(lessonId) {

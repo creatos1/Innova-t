@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import ProgressBar from '../components/ProgressBar'
+import ActionMessageModal from '../components/ActionMessageModal'
+import BrandLogo from '../components/BrandLogo'
 import StatusBadge from '../components/StatusBadge'
-import { getLesson, getLessonsByLevel, getLevel } from '../domain/academicCatalog'
+import { getCanonicalLevelId, getLesson, getLessonsByLevel, getLevel, isFreeTopicLevelId } from '../domain/academicCatalog'
 import { formatDateTime, toDate } from '../domain/dateUtils'
 import {
   buildClassSlotKey,
@@ -12,10 +13,10 @@ import {
   getClassTimeValue,
   getMexicoDateInput,
   getScheduleHoursForDate,
+  formatTimeLabel,
   isSlotBlocked
 } from '../domain/scheduleMatcher'
 import { generateClassFormationSuggestions } from '../services/aiAdvisor'
-import { createAuthUser } from '../services/authProvisioning'
 import { useInstituteData } from '../services/useInstituteData'
 
 const TABS = [
@@ -26,6 +27,10 @@ const TABS = [
   { id: 'attendance', label: 'ASISTENCIAS' },
   { id: 'catalog', label: 'LECCIONES' }
 ]
+
+const DEFAULT_STUDENT_LEVEL_ID = 'pre-starter'
+const DEFAULT_STUDENT_LESSON_ID = 'L1'
+const PAYMENT_MONTH_COLUMNS = 12
 
 function buildDateInput(year, monthIndex, day) {
   const lastDay = new Date(year, monthIndex + 1, 0).getDate()
@@ -61,12 +66,51 @@ function buildMonthlyPeriods(student, count = 8) {
   })
 }
 
+function buildEnrollmentPeriods(student, count = PAYMENT_MONTH_COLUMNS) {
+  const enrollment = parseDateInput(student?.enrollmentDate)
+  if (!enrollment) return []
+
+  return Array.from({ length: count }, (_, index) => {
+    const anchor = new Date(enrollment.year, enrollment.month - 1 + index, 1)
+    const dueDate = buildDateInput(anchor.getFullYear(), anchor.getMonth(), enrollment.day)
+    const monthLabel = new Intl.DateTimeFormat('es-MX', {
+      month: 'short',
+      year: '2-digit'
+    }).format(new Date(`${dueDate}T12:00:00-06:00`))
+
+    return {
+      dueDate,
+      monthLabel,
+      label: formatDateInputLabel(dueDate)
+    }
+  })
+}
+
+function getPaymentKey(studentId, dueDate) {
+  return `${studentId}__${dueDate}`
+}
+
+function isPaymentPaid(payment) {
+  return payment?.status === 'pagado' || !!payment?.paidAt
+}
+
+function getPaymentAmount(payment) {
+  const amount = Number(payment?.amount || 0)
+  return Number.isFinite(amount) ? amount : 0
+}
+
 function sortByName(items = []) {
   return [...items].sort((a, b) => (a.fullName || a.name || '').localeCompare(b.fullName || b.name || '', 'es'))
 }
 
 function uniqueValues(values = []) {
   return Array.from(new Set(values.filter(Boolean)))
+}
+
+function matchesSearch(values = [], search = '') {
+  const query = String(search || '').trim().toLowerCase()
+  if (!query) return true
+  return values.some(value => String(value || '').toLowerCase().includes(query))
 }
 
 function nextTeacherPublicId(teachers = []) {
@@ -86,6 +130,30 @@ function getClassDurationHours(classItem) {
 function formatClassHours(classItem) {
   const hours = getClassDurationHours(classItem)
   return `${hours} ${hours === 1 ? 'hora' : 'horas'}`
+}
+
+function hasClassStudents(classItem) {
+  return Array.isArray(classItem?.studentIds) && classItem.studentIds.length > 0
+}
+
+function getRegisteredLessonIdsForStudent(studentId, classes = [], attendance = [], students = []) {
+  const student = students.find(item => item.id === studentId)
+  const lessonIds = new Set(Array.isArray(student?.completedLessonIds) ? student.completedLessonIds : [])
+  const attendedClassIds = new Set(
+    attendance
+      .filter(record => record.studentId === studentId && record.attended === true)
+      .map(record => record.classId)
+  )
+
+  classes.forEach(classItem => {
+    if ((classItem.status || 'programada') === 'cancelada') return
+    if (!classItem.studentIds?.includes(studentId) && !attendedClassIds.has(classItem.id)) return
+    ;(classItem.lessonIds || []).forEach(lessonId => {
+      if (lessonId) lessonIds.add(lessonId)
+    })
+  })
+
+  return lessonIds
 }
 
 function buildPendingSlotGroups(classes = [], students = []) {
@@ -139,19 +207,114 @@ function buildPendingSlotGroups(classes = [], students = []) {
     .sort((a, b) => (toDate(a.startAt)?.getTime() || 0) - (toDate(b.startAt)?.getTime() || 0))
 }
 
+function buildReservationStudentRows(classes = [], students = []) {
+  const studentsById = new Map(students.map(student => [student.id, student]))
+  const rowsByReservation = new Map()
+
+  classes.forEach(classItem => {
+    const date = classItem.date || getClassDateValue(classItem.startAt)
+    const time = classItem.time || getClassTimeValue(classItem.startAt)
+    const reservationBlockId = classItem.reservationBlockId || classItem.id
+    const hours = Number(classItem.reservationBlockHours || classItem.durationHours || 1)
+
+    ;(classItem.studentIds || []).forEach(studentId => {
+      const student = studentsById.get(studentId)
+      const key = `${studentId}__${reservationBlockId}`
+      const previous = rowsByReservation.get(key)
+
+      rowsByReservation.set(key, {
+        studentId,
+        publicId: student?.publicId || studentId,
+        fullName: student?.fullName || 'Alumno sin nombre',
+        hours: Math.max(previous?.hours || 0, Number.isFinite(hours) ? hours : 1),
+        date,
+        time,
+        startAt: previous?.startAt || classItem.startAt
+      })
+    })
+  })
+
+  return Array.from(rowsByReservation.values())
+    .sort((a, b) => (toDate(a.startAt)?.getTime() || 0) - (toDate(b.startAt)?.getTime() || 0) || a.fullName.localeCompare(b.fullName, 'es'))
+}
+
+function getLevelOrderForStudent(student, levels = []) {
+  const canonicalLevelId = getCanonicalLevelId(student?.currentLevelId)
+  return Number(getLevel(canonicalLevelId, levels)?.order ?? 999)
+}
+
+function splitStudentIdsByLevelProximity(studentIds = [], students = [], levels = [], classCount = 1) {
+  const studentsById = new Map(students.map(student => [student.id, student]))
+  const cleanStudentIds = uniqueValues(studentIds)
+  const count = Math.max(1, Math.min(Number(classCount) || 1, cleanStudentIds.length || 1))
+  const orderedStudentIds = [...cleanStudentIds].sort((a, b) => {
+    const studentA = studentsById.get(a)
+    const studentB = studentsById.get(b)
+    return getLevelOrderForStudent(studentA, levels) - getLevelOrderForStudent(studentB, levels)
+      || (studentA?.fullName || '').localeCompare(studentB?.fullName || '', 'es')
+  })
+  const baseSize = Math.floor(orderedStudentIds.length / count)
+  const remainder = orderedStudentIds.length % count
+  let cursor = 0
+
+  return Array.from({ length: count }, (_, index) => {
+    const chunkSize = baseSize + (index < remainder ? 1 : 0)
+    const chunk = orderedStudentIds.slice(cursor, cursor + chunkSize)
+    cursor += chunkSize
+    return chunk
+  }).filter(chunk => chunk.length)
+}
+
+function getStudentGroupLevelDistance(studentIds = [], students = [], levels = []) {
+  const studentsById = new Map(students.map(student => [student.id, student]))
+  const orders = studentIds
+    .map(studentId => getLevelOrderForStudent(studentsById.get(studentId), levels))
+    .filter(order => Number.isFinite(order) && order < 999)
+
+  if (!orders.length) return 0
+  return Math.max(...orders) - Math.min(...orders)
+}
+
+function findDefaultLessonForStudentGroup(studentIds = [], students = [], lessons = [], levels = []) {
+  const studentsById = new Map(students.map(student => [student.id, student]))
+  const levelDistance = getStudentGroupLevelDistance(studentIds, students, levels)
+  const freeTopicLesson = lessons.find(lesson => isFreeTopicLevelId(lesson.levelId))
+
+  if (levelDistance >= 2 && freeTopicLesson) return freeTopicLesson.id
+
+  const levelFrequency = studentIds.reduce((counts, studentId) => {
+    const levelId = getCanonicalLevelId(studentsById.get(studentId)?.currentLevelId)
+    counts.set(levelId, (counts.get(levelId) || 0) + 1)
+    return counts
+  }, new Map())
+  const preferredLevelId = Array.from(levelFrequency.entries())
+    .sort((a, b) => b[1] - a[1] || Number(getLevel(a[0], levels)?.order ?? 999) - Number(getLevel(b[0], levels)?.order ?? 999))[0]?.[0]
+  const currentLessonId = studentIds
+    .map(studentId => studentsById.get(studentId)?.currentLessonId)
+    .find(Boolean)
+
+  return lessons.find(lesson => lesson.id === currentLessonId && !isFreeTopicLevelId(lesson.levelId))?.id
+    || lessons.find(lesson => getCanonicalLevelId(lesson.levelId) === preferredLevelId && !isFreeTopicLevelId(lesson.levelId))?.id
+    || lessons.find(lesson => !isFreeTopicLevelId(lesson.levelId))?.id
+    || ''
+}
+
+function getHourWord(hours) {
+  return Number(hours) === 1 ? 'hora' : 'horas'
+}
+
 function emptyStudentForm(today) {
   return {
     publicId: '',
     fullName: '',
     email: '',
     phone: '',
-    currentLevelId: '',
-    currentLessonId: '',
+    currentLevelId: DEFAULT_STUDENT_LEVEL_ID,
+    currentLessonId: DEFAULT_STUDENT_LESSON_ID,
     enrollmentDate: today,
     status: 'activo',
     scholarshipStatus: 'activa',
-    progressPercent: 0,
-    password: ''
+    progressPercent: 0
   }
 }
 
@@ -166,8 +329,7 @@ function studentToForm(student, today) {
     enrollmentDate: student?.enrollmentDate || today,
     status: student?.status || 'activo',
     scholarshipStatus: student?.scholarshipStatus || 'activa',
-    progressPercent: Number(student?.progressPercent || 0),
-    password: ''
+    progressPercent: Number(student?.progressPercent || 0)
   }
 }
 
@@ -185,6 +347,7 @@ function AdminDashboard() {
     createBulkAttendance,
     createBlockout,
     createClass,
+    createClassroom,
     createLesson,
     createLevel,
     createPayment,
@@ -192,18 +355,22 @@ function AdminDashboard() {
     createTeacher,
     deleteClass,
     deleteBlockout,
+    deleteClassroom,
     deleteLesson,
     deleteLevel,
-    deletePayment,
     deleteStudent,
     deleteTeacher,
     markAttendance,
     seedAcademicCatalog,
+    seedClassrooms,
     seedTeachers,
     updateClass,
+    updateClassroom,
     updateLesson,
     updateLevel,
     updatePayment,
+    saveGrade,
+    deleteGrade,
     updateStudent,
     updateTeacher
   } = useInstituteData()
@@ -213,15 +380,24 @@ function AdminDashboard() {
   const [selectedStudentId, setSelectedStudentId] = useState('')
   const [studentForm, setStudentForm] = useState(() => emptyStudentForm(todayMexico))
   const [studentDraft, setStudentDraft] = useState(() => emptyStudentForm(todayMexico))
-  const [teacherForm, setTeacherForm] = useState({ publicId: '', name: '', email: '', password: '' })
+  const [teacherForm, setTeacherForm] = useState({ publicId: '', name: '', email: '' })
   const [teacherDrafts, setTeacherDrafts] = useState({})
+  const [classroomForm, setClassroomForm] = useState({ name: '' })
+  const [classroomDrafts, setClassroomDrafts] = useState({})
   const [editingClassId, setEditingClassId] = useState('')
+  const [isClassModalOpen, setIsClassModalOpen] = useState(false)
   const [mergeSourceClassIds, setMergeSourceClassIds] = useState([])
   const [aiClassPlan, setAiClassPlan] = useState(null)
   const [aiClassLoading, setAiClassLoading] = useState(false)
+  const [isAiPlanModalOpen, setIsAiPlanModalOpen] = useState(false)
+  const [aiPlanGroup, setAiPlanGroup] = useState(null)
+  const [aiPlanDrafts, setAiPlanDrafts] = useState([])
+  const [aiPlanClassCount, setAiPlanClassCount] = useState(1)
+  const [aiPlanCloseConfirm, setAiPlanCloseConfirm] = useState(false)
   const [classForm, setClassForm] = useState({
     lessonId: '',
     teacherId: '',
+    classroomId: '',
     date: todayMexico,
     time: '08:00',
     durationHours: 1,
@@ -242,6 +418,16 @@ function AdminDashboard() {
     period: '',
     amount: 0,
     status: 'pendiente'
+  })
+  const [paymentCapture, setPaymentCapture] = useState(null)
+  const [gradeDrafts, setGradeDrafts] = useState({})
+  const [listFilters, setListFilters] = useState({
+    students: { search: '', order: 'name-asc' },
+    teachers: { search: '', order: 'name-asc' },
+    payments: { search: '', order: 'name-asc' },
+    classes: { search: '', order: 'date-asc' },
+    attendance: { search: '', order: 'name-asc' },
+    catalog: { search: '', order: 'level-asc' }
   })
   const [levelForm, setLevelForm] = useState({
     id: '',
@@ -266,7 +452,16 @@ function AdminDashboard() {
   const requireLogin = !loading && (!user || !profile)
   const sortedStudents = useMemo(() => sortByName(data.students), [data.students])
   const sortedTeachers = useMemo(() => sortByName(data.teachers), [data.teachers])
+  const sortedClassrooms = useMemo(() => (
+    [...(data.classrooms || [])].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'es'))
+  ), [data.classrooms])
+  const activeClassrooms = useMemo(() => (
+    sortedClassrooms.filter(classroom => classroom.active !== false)
+  ), [sortedClassrooms])
   const sortedLevels = useMemo(() => [...data.levels].sort((a, b) => Number(a.order || 0) - Number(b.order || 0)), [data.levels])
+  const academicLevels = useMemo(() => (
+    sortedLevels.filter(level => !isFreeTopicLevelId(level.id))
+  ), [sortedLevels])
   const sortedLessons = useMemo(() => [...data.lessons].sort((a, b) => {
     const levelA = getLevel(a.levelId, data.levels)?.order || 0
     const levelB = getLevel(b.levelId, data.levels)?.order || 0
@@ -284,12 +479,18 @@ function AdminDashboard() {
   ), [data.classes])
   const pendingAssignmentClasses = useMemo(() => (
     classesByRecentDate.filter(classItem => (
-      classItem.status === 'pendiente_asignacion'
-      || (classItem.reservationSource === 'student-auto' && !classItem.teacherId)
+      hasClassStudents(classItem)
+      && (
+        classItem.status === 'pendiente_asignacion'
+        || (classItem.reservationSource === 'student-auto' && !classItem.teacherId)
+      )
     ))
   ), [classesByRecentDate])
   const pendingAssignmentSlotGroups = useMemo(() => (
     buildPendingSlotGroups(pendingAssignmentClasses, sortedStudents)
+  ), [pendingAssignmentClasses, sortedStudents])
+  const reservationStudentRows = useMemo(() => (
+    buildReservationStudentRows(pendingAssignmentClasses, sortedStudents)
   ), [pendingAssignmentClasses, sortedStudents])
   const selectedAttendanceClass = useMemo(() => (
     classesByRecentDate.find(classItem => classItem.id === selectedAttendanceClassId)
@@ -319,6 +520,112 @@ function AdminDashboard() {
       })
       .sort((a, b) => a.studentName.localeCompare(b.studentName, 'es') || (toDate(b.startAt)?.getTime() || 0) - (toDate(a.startAt)?.getTime() || 0))
   ), [data.attendance, data.classes, data.students])
+  const selectedStudentRegisteredLessons = useMemo(() => (
+    getRegisteredLessonIdsForStudent(selectedStudentId, data.classes, data.attendance, data.students)
+  ), [data.attendance, data.classes, data.students, selectedStudentId])
+  const paymentsByStudentDueDate = useMemo(() => (
+    data.payments.reduce((map, payment) => {
+      const key = getPaymentKey(payment.studentId, payment.dueDate)
+      const previous = map.get(key)
+      if (!previous || isPaymentPaid(payment) || toDate(payment.updatedAt) > toDate(previous.updatedAt)) {
+        map.set(key, payment)
+      }
+      return map
+    }, new Map())
+  ), [data.payments])
+  const paidPayments = useMemo(() => (
+    data.payments.filter(isPaymentPaid)
+  ), [data.payments])
+  const paymentTotals = useMemo(() => {
+    const currentMonth = todayMexico.slice(0, 7)
+    return paidPayments.reduce((totals, payment) => {
+      const amount = getPaymentAmount(payment)
+      const paidDate = payment.paidAt || payment.dueDate || ''
+      return {
+        total: totals.total + amount,
+        month: String(paidDate).slice(0, 7) === currentMonth ? totals.month + amount : totals.month,
+        count: totals.count + 1
+      }
+    }, { total: 0, month: 0, count: 0 })
+  }, [paidPayments, todayMexico])
+  const visibleStudents = useMemo(() => (
+    sortedStudents
+      .filter(student => matchesSearch([
+        student.publicId,
+        student.fullName,
+        student.email,
+        student.phone,
+        getLevel(student.currentLevelId, data.levels)?.shortName
+      ], listFilters.students.search))
+      .sort((a, b) => {
+        if (listFilters.students.order === 'id-asc') return String(a.publicId || '').localeCompare(String(b.publicId || ''), 'es')
+        if (listFilters.students.order === 'level-asc') return (getLevel(a.currentLevelId, data.levels)?.order || 0) - (getLevel(b.currentLevelId, data.levels)?.order || 0)
+        return (a.fullName || '').localeCompare(b.fullName || '', 'es')
+      })
+  ), [data.levels, listFilters.students, sortedStudents])
+  const visibleTeachers = useMemo(() => (
+    sortedTeachers
+      .filter(teacher => matchesSearch([teacher.publicId, teacher.name, teacher.email], listFilters.teachers.search))
+      .sort((a, b) => {
+        if (listFilters.teachers.order === 'id-asc') return String(a.publicId || '').localeCompare(String(b.publicId || ''), 'es')
+        return (a.name || '').localeCompare(b.name || '', 'es')
+      })
+  ), [listFilters.teachers, sortedTeachers])
+  const visiblePaymentStudents = useMemo(() => (
+    sortedStudents
+      .filter(student => matchesSearch([student.publicId, student.fullName, student.email], listFilters.payments.search))
+      .sort((a, b) => {
+        if (listFilters.payments.order === 'id-asc') return String(a.publicId || '').localeCompare(String(b.publicId || ''), 'es')
+        if (listFilters.payments.order === 'overdue-first') {
+          const overdueA = buildEnrollmentPeriods(a).some(period => !isPaymentPaid(paymentsByStudentDueDate.get(getPaymentKey(a.id, period.dueDate))) && period.dueDate < todayMexico)
+          const overdueB = buildEnrollmentPeriods(b).some(period => !isPaymentPaid(paymentsByStudentDueDate.get(getPaymentKey(b.id, period.dueDate))) && period.dueDate < todayMexico)
+          return Number(overdueB) - Number(overdueA) || (a.fullName || '').localeCompare(b.fullName || '', 'es')
+        }
+        return (a.fullName || '').localeCompare(b.fullName || '', 'es')
+      })
+  ), [listFilters.payments, paymentsByStudentDueDate, sortedStudents, todayMexico])
+  const visibleClassesByRecentDate = useMemo(() => (
+    classesByRecentDate
+      .filter(classItem => {
+        const lesson = getLesson(classItem.lessonIds?.[0], data.lessons)
+        const statusLabel = classItem.status === 'cancelada'
+          ? 'cancelada'
+          : classItem.status === 'pendiente_asignacion' || !classItem.teacherId
+            ? 'pendiente_asignacion'
+            : 'programada'
+        return matchesSearch([
+          lesson?.name,
+          classItem.teacherName,
+          classItem.classroomName,
+          classItem.room,
+          statusLabel
+        ], listFilters.classes.search)
+      })
+      .sort((a, b) => {
+        if (listFilters.classes.order === 'date-desc') return (toDate(b.startAt)?.getTime() || 0) - (toDate(a.startAt)?.getTime() || 0)
+        if (listFilters.classes.order === 'teacher-asc') return String(a.teacherName || '').localeCompare(String(b.teacherName || ''), 'es')
+        return (toDate(a.startAt)?.getTime() || 0) - (toDate(b.startAt)?.getTime() || 0)
+      })
+  ), [classesByRecentDate, data.lessons, listFilters.classes])
+  const visibleAttendanceRows = useMemo(() => (
+    attendanceRows
+      .filter(record => matchesSearch([record.studentName, record.publicId, record.className, record.teacherName], listFilters.attendance.search))
+      .sort((a, b) => {
+        if (listFilters.attendance.order === 'date-desc') return (toDate(b.startAt)?.getTime() || 0) - (toDate(a.startAt)?.getTime() || 0)
+        if (listFilters.attendance.order === 'missed-first') return Number(a.attended) - Number(b.attended) || a.studentName.localeCompare(b.studentName, 'es')
+        return a.studentName.localeCompare(b.studentName, 'es')
+      })
+  ), [attendanceRows, listFilters.attendance])
+  const visibleSortedLessons = useMemo(() => (
+    sortedLessons
+      .filter(lesson => matchesSearch([lesson.id, lesson.name, getLevel(lesson.levelId, data.levels)?.shortName], listFilters.catalog.search))
+      .sort((a, b) => {
+        if (listFilters.catalog.order === 'name-asc') return String(a.name || '').localeCompare(String(b.name || ''), 'es')
+        const levelA = getLevel(a.levelId, data.levels)?.order || 0
+        const levelB = getLevel(b.levelId, data.levels)?.order || 0
+        return levelA - levelB || Number(a.order || 0) - Number(b.order || 0)
+      })
+  ), [data.levels, listFilters.catalog, sortedLessons])
   const studentFormLessons = useMemo(() => (
     getLessonsByLevel(studentForm.currentLevelId, data.lessons)
   ), [studentForm.currentLevelId, data.lessons])
@@ -365,6 +672,23 @@ function AdminDashboard() {
       }), {})
     ))
   }, [data.teachers])
+
+  useEffect(() => {
+    setClassroomDrafts(prev => (
+      (data.classrooms || []).reduce((drafts, classroom) => ({
+        ...drafts,
+        [classroom.id]: prev[classroom.id] || {
+          name: classroom.name || '',
+          active: classroom.active !== false
+        }
+      }), {})
+    ))
+  }, [data.classrooms])
+
+  useEffect(() => {
+    if (classForm.classroomId || !activeClassrooms[0]?.id) return
+    setClassForm(prev => ({ ...prev, classroomId: activeClassrooms[0].id }))
+  }, [activeClassrooms, classForm.classroomId])
 
   useEffect(() => {
     if (teacherForm.publicId) return
@@ -441,25 +765,51 @@ function AdminDashboard() {
     }))
   }, [classForm.time, classTimeOptions])
 
+  useEffect(() => {
+    if (!studentForm.currentLevelId || studentForm.currentLessonId || !studentFormLessons[0]?.id) return
+    setStudentForm(prev => ({ ...prev, currentLessonId: studentFormLessons[0].id }))
+  }, [studentForm.currentLessonId, studentForm.currentLevelId, studentFormLessons])
+
+  useEffect(() => {
+    if (!studentDraft.currentLevelId || studentDraft.currentLessonId || !studentDraftLessons[0]?.id) return
+    setStudentDraft(prev => ({ ...prev, currentLessonId: studentDraftLessons[0].id }))
+  }, [studentDraft.currentLessonId, studentDraft.currentLevelId, studentDraftLessons])
+
+  useEffect(() => {
+    if (!selectedStudentId) return
+
+    setGradeDrafts(prev => {
+      const next = { ...prev }
+      academicLevels.forEach(level => {
+        const key = `${selectedStudentId}-${level.id}`
+        const existingGrade = data.grades.find(grade => grade.studentId === selectedStudentId && grade.levelId === level.id)
+        if (!next[key] || existingGrade) {
+          next[key] = {
+            oral: existingGrade?.oral ?? '',
+            written: existingGrade?.written ?? ''
+          }
+        }
+      })
+      return next
+    })
+  }, [academicLevels, data.grades, selectedStudentId])
+
   const resetClassForm = () => {
     setEditingClassId('')
+    setIsClassModalOpen(false)
     setMergeSourceClassIds([])
-    setClassForm({ lessonId: '', teacherId: '', date: todayMexico, time: '08:00', durationHours: 1, status: 'programada' })
+    setClassForm({ lessonId: '', teacherId: '', classroomId: activeClassrooms[0]?.id || '', date: todayMexico, time: '08:00', durationHours: 1, status: 'programada' })
     setClassStudentIds([])
+  }
+
+  const closeClassModal = () => {
+    resetClassForm()
   }
 
   const submitStudent = async (event) => {
     event.preventDefault()
-    try {
-      const uid = studentForm.email && studentForm.password
-        ? await createAuthUser(studentForm.email, studentForm.password)
-        : ''
-
-      await createStudent({ ...studentForm, uid })
-      setStudentForm(emptyStudentForm(todayMexico))
-    } catch (error) {
-      setMessage(error.message || 'No se pudo crear el usuario Auth del estudiante.')
-    }
+    await createStudent(studentForm)
+    setStudentForm(emptyStudentForm(todayMexico))
   }
 
   const submitStudentUpdate = async (event) => {
@@ -476,18 +826,16 @@ function AdminDashboard() {
 
   const submitTeacher = async (event) => {
     event.preventDefault()
-    try {
-      if (!teacherForm.name.trim()) return
+    if (!teacherForm.name.trim()) return
+    await createTeacher(teacherForm)
+    setTeacherForm({ publicId: nextTeacherPublicId(sortedTeachers), name: '', email: '' })
+  }
 
-      const uid = teacherForm.email && teacherForm.password
-        ? await createAuthUser(teacherForm.email, teacherForm.password)
-        : ''
-
-      await createTeacher({ ...teacherForm, uid })
-      setTeacherForm({ publicId: nextTeacherPublicId(sortedTeachers), name: '', email: '', password: '' })
-    } catch (error) {
-      setMessage(error.message || 'No se pudo crear el usuario Auth del teacher.')
-    }
+  const submitClassroom = async (event) => {
+    event.preventDefault()
+    if (!classroomForm.name.trim()) return
+    await createClassroom({ ...classroomForm, active: true })
+    setClassroomForm({ name: '' })
   }
 
   const toggleClassStudent = (studentId, checked) => {
@@ -502,9 +850,120 @@ function AdminDashboard() {
     })
   }
 
+  const getAiPlanMaxClasses = (slotGroup = aiPlanGroup) => {
+    const classroomLimit = activeClassrooms.length || 1
+    const studentLimit = slotGroup?.studentIds?.length || 1
+    return Math.max(1, Math.min(classroomLimit, studentLimit))
+  }
+
+  const getSourceClassIdsForStudentIds = (slotGroup, studentIds = []) => {
+    const selected = new Set(studentIds)
+    return (slotGroup?.sourceClassIds || []).filter(classId => {
+      const classItem = data.classes.find(item => item.id === classId)
+      const sourceStudentIds = classItem?.studentIds || []
+      return sourceStudentIds.length && sourceStudentIds.every(studentId => selected.has(studentId))
+    })
+  }
+
+  const buildAiPlanDrafts = (slotGroup, suggestions = [], requestedClassCount = 1, previousDrafts = []) => {
+    if (!slotGroup?.studentIds?.length) return []
+
+    const maxClasses = getAiPlanMaxClasses(slotGroup)
+    const classCount = Math.max(1, Math.min(Number(requestedClassCount) || 1, maxClasses))
+    const usableSuggestions = (suggestions || []).filter(suggestion => suggestion.studentIds?.length)
+    const chunks = splitStudentIdsByLevelProximity(slotGroup.studentIds, sortedStudents, data.levels, classCount)
+    const assigned = new Set(chunks.flat())
+    const missing = slotGroup.studentIds.filter(studentId => !assigned.has(studentId))
+
+    missing.forEach((studentId, index) => {
+      chunks[index % chunks.length].push(studentId)
+    })
+
+    return chunks.map((studentIds, index) => {
+      const suggestion = usableSuggestions[index] || usableSuggestions[0] || {}
+      const previous = previousDrafts[index] || {}
+      const sourceClassIds = getSourceClassIdsForStudentIds(slotGroup, studentIds)
+      const classId = sourceClassIds[0] || suggestion.classId || slotGroup.sourceClassIds?.[index] || ''
+      const suggestionLesson = getLesson(suggestion.lessonId, data.lessons)
+      const groupLevelDistance = getStudentGroupLevelDistance(studentIds, sortedStudents, data.levels)
+      const shouldIgnoreFreeTopic = groupLevelDistance < 2 && isFreeTopicLevelId(suggestionLesson?.levelId)
+      const defaultLessonId = findDefaultLessonForStudentGroup(studentIds, sortedStudents, data.lessons, data.levels)
+
+      return {
+        id: previous.id || `${slotGroup.id}-draft-${index + 1}`,
+        title: `Clase ${index + 1}`,
+        classId,
+        sourceClassIds,
+        lessonId: previous.lessonId || (shouldIgnoreFreeTopic ? '' : suggestion.lessonId) || defaultLessonId,
+        teacherId: previous.teacherId || '',
+        classroomId: previous.classroomId || activeClassrooms[index % Math.max(activeClassrooms.length, 1)]?.id || '',
+        studentIds,
+        reason: groupLevelDistance >= 2
+          ? 'Grupo con salto amplio de nivel; Tema Libre es aceptable si no conviene separarlo mas.'
+          : 'Grupo formado por cercania de nivel academico.',
+        confidence: Number(suggestion.confidence || 0.8)
+      }
+    })
+  }
+
+  const setAiDraftClassCount = (nextCount) => {
+    const count = Math.max(1, Math.min(Number(nextCount) || 1, getAiPlanMaxClasses(aiPlanGroup)))
+    setAiPlanClassCount(count)
+    setAiPlanDrafts(prev => buildAiPlanDrafts(aiPlanGroup, aiClassPlan?.suggestions || [], count, prev))
+  }
+
+  const updateAiPlanDraft = (draftId, patch) => {
+    setAiPlanDrafts(prev => prev.map(draft => (
+      draft.id === draftId ? { ...draft, ...patch } : draft
+    )))
+  }
+
+  const toggleAiPlanDraftStudent = (draftId, studentId, checked) => {
+    setAiPlanDrafts(prev => prev.map(draft => {
+      if (draft.id === draftId) {
+        const nextStudentIds = checked
+          ? uniqueValues([...draft.studentIds, studentId]).slice(0, 8)
+          : draft.studentIds.filter(id => id !== studentId)
+
+        return {
+          ...draft,
+          studentIds: nextStudentIds,
+          sourceClassIds: getSourceClassIdsForStudentIds(aiPlanGroup, nextStudentIds)
+        }
+      }
+
+      if (!checked) return draft
+
+      const nextStudentIds = draft.studentIds.filter(id => id !== studentId)
+      return {
+        ...draft,
+        studentIds: nextStudentIds,
+        sourceClassIds: getSourceClassIdsForStudentIds(aiPlanGroup, nextStudentIds)
+      }
+    }))
+  }
+
+  const resetAiPlanModal = () => {
+    setIsAiPlanModalOpen(false)
+    setAiPlanGroup(null)
+    setAiPlanDrafts([])
+    setAiPlanClassCount(1)
+    setAiPlanCloseConfirm(false)
+  }
+
+  const requestCloseAiPlanModal = () => {
+    if (!aiPlanCloseConfirm) {
+      setAiPlanCloseConfirm(true)
+      return
+    }
+
+    resetAiPlanModal()
+  }
+
   const buildClassPayload = () => {
     const lesson = getLesson(classForm.lessonId, data.lessons)
     const teacher = sortedTeachers.find(item => item.id === classForm.teacherId)
+    const classroom = sortedClassrooms.find(item => item.id === classForm.classroomId)
     const levelId = lesson?.levelId || ''
     const durationHours = 1
     const slotKey = buildClassSlotKey({
@@ -527,7 +986,9 @@ function AdminDashboard() {
       endAt: buildMexicoDateTimeIso(classForm.date, classForm.time, durationHours),
       durationHours: 1,
       studentIds: classStudentIds,
-      room: classLevel?.shortName ? `Salon ${classLevel.shortName}` : 'Salon por asignar',
+      classroomId: classroom?.id || '',
+      classroomName: classroom?.name || '',
+      room: classroom?.name || 'Salon por asignar',
       mode: 'presencial',
       status: 'programada',
       reservationSource: editingClassId ? 'admin-edited' : 'admin-manual',
@@ -541,10 +1002,117 @@ function AdminDashboard() {
     }
   }
 
+  const buildClassPayloadFromAiDraft = (draft) => {
+    const lesson = getLesson(draft.lessonId, data.lessons)
+    const teacher = sortedTeachers.find(item => item.id === draft.teacherId)
+    const classroom = sortedClassrooms.find(item => item.id === draft.classroomId)
+    const levelId = lesson?.levelId || ''
+    const durationHours = 1
+    const date = aiPlanGroup?.date || classForm.date
+    const time = aiPlanGroup?.time || classForm.time
+    const slotKey = buildClassSlotKey({
+      date,
+      time,
+      levelId,
+      lessonId: lesson?.id || '',
+      durationHours
+    })
+
+    return {
+      slotKey,
+      levelId,
+      lessonIds: lesson?.id ? [lesson.id] : [],
+      lessonName: lesson?.name || '',
+      teacherId: teacher?.id || '',
+      teacherName: teacher?.name || '',
+      date,
+      time,
+      startAt: buildMexicoDateTimeIso(date, time),
+      endAt: buildMexicoDateTimeIso(date, time, durationHours),
+      durationHours,
+      studentIds: draft.studentIds,
+      classroomId: classroom?.id || '',
+      classroomName: classroom?.name || '',
+      room: classroom?.name || 'Salon por asignar',
+      mode: 'presencial',
+      status: 'programada',
+      reservationSource: 'ai-formed',
+      aiAssignment: {
+        provider: aiClassPlan?.provider || 'local-rules',
+        model: aiClassPlan?.model || '',
+        strategy: 'admin_confirmed_ai_class_grouping',
+        unlimitedFree: true,
+        maxStudents: 8,
+        sourceClassIds: draft.sourceClassIds || [],
+        reason: draft.reason || 'Clase formada desde propuesta IA.'
+      }
+    }
+  }
+
+  const submitAiPlanClasses = async () => {
+    const drafts = aiPlanDrafts.filter(draft => draft.studentIds.length)
+    if (!drafts.length) {
+      setMessage('La propuesta no tiene alumnos seleccionados.')
+      return
+    }
+
+    const missingData = drafts.some(draft => !draft.lessonId || !draft.teacherId || !draft.classroomId)
+    if (missingData) {
+      setMessage('Cada clase necesita tema, teacher y classroom antes de guardar.')
+      return
+    }
+
+    const duplicatedStudents = drafts
+      .flatMap(draft => draft.studentIds)
+      .filter((studentId, index, list) => list.indexOf(studentId) !== index)
+    if (duplicatedStudents.length) {
+      setMessage('Un alumno no puede quedar en dos clases del mismo horario.')
+      return
+    }
+
+    const duplicatedClassrooms = drafts
+      .map(draft => draft.classroomId)
+      .filter((classroomId, index, list) => classroomId && list.indexOf(classroomId) !== index)
+    if (duplicatedClassrooms.length) {
+      setMessage('No repitas classroom en clases del mismo horario.')
+      return
+    }
+
+    const usedAnchorIds = new Set()
+    const consumedSourceIds = new Set()
+
+    for (const draft of drafts) {
+      const sourceClassIds = getSourceClassIdsForStudentIds(aiPlanGroup, draft.studentIds)
+      const anchorId = sourceClassIds.find(classId => !usedAnchorIds.has(classId))
+      const payload = buildClassPayloadFromAiDraft({
+        ...draft,
+        sourceClassIds
+      })
+
+      sourceClassIds.forEach(classId => consumedSourceIds.add(classId))
+
+      if (anchorId) {
+        usedAnchorIds.add(anchorId)
+        await updateClass(anchorId, payload)
+      } else {
+        await createClass(payload)
+      }
+    }
+
+    for (const classId of consumedSourceIds) {
+      if (!usedAnchorIds.has(classId)) {
+        await deleteClass(classId)
+      }
+    }
+
+    setMessage(`${drafts.length} clase(s) formadas para ${aiPlanGroup ? formatDateTime(aiPlanGroup.startAt) : 'el horario seleccionado'}.`)
+    resetAiPlanModal()
+  }
+
   const submitClass = async (event) => {
     event.preventDefault()
-    if (!classForm.teacherId || !classForm.lessonId || !classForm.time) {
-      setMessage('Selecciona leccion, horario y teacher para formar la clase.')
+    if (!classForm.teacherId || !classForm.classroomId || !classForm.lessonId || !classForm.time) {
+      setMessage('Selecciona leccion, horario, teacher y classroom para formar la clase.')
       return
     }
     if (classStudentIds.length > 8) {
@@ -581,6 +1149,7 @@ function AdminDashboard() {
     setClassForm({
       lessonId: overrides.lessonId ?? classItem.lessonIds?.[0] ?? '',
       teacherId: overrides.teacherId ?? classItem.teacherId ?? '',
+      classroomId: overrides.classroomId ?? classItem.classroomId ?? activeClassrooms[0]?.id ?? '',
       date: classItem.date || getClassDateValue(classItem.startAt),
       time: classItem.time || getClassTimeValue(classItem.startAt),
       durationHours: overrides.durationHours ?? classItem.durationHours ?? 1,
@@ -588,6 +1157,7 @@ function AdminDashboard() {
     })
     setMergeSourceClassIds(overrides.sourceClassIds || [])
     setClassStudentIds((overrides.studentIds || classItem.studentIds || []).slice(0, 8))
+    setIsClassModalOpen(true)
   }
 
   const submitBlockout = async (event) => {
@@ -602,47 +1172,57 @@ function AdminDashboard() {
     setBlockoutForm({ date: todayMexico, time: '', allDay: true, reason: '' })
   }
 
-  const requestGeminiClassPlan = async () => {
-    if (!pendingAssignmentClasses.length) {
-      setMessage('No hay reservas pendientes para Gemini.')
+  const requestMistralClassPlan = async (slotGroup) => {
+    const sourceIds = new Set(slotGroup?.sourceClassIds || [])
+    const targetPendingClasses = pendingAssignmentClasses.filter(classItem => sourceIds.has(classItem.id))
+    const targetSlot = slotGroup ? {
+      date: slotGroup.date,
+      time: slotGroup.time,
+      label: formatDateTime(slotGroup.startAt)
+    } : null
+
+    if (!targetPendingClasses.length) {
+      setAiClassPlan(null)
+      setMessage('No hay reservas pendientes para ese bloque.')
       return
     }
 
     try {
       setAiClassLoading(true)
       const plan = await generateClassFormationSuggestions({
-        pendingClasses: pendingAssignmentClasses,
+        pendingClasses: targetPendingClasses,
         students: data.students,
         teachers: sortedTeachers,
         classes: data.classes,
         lessons: data.lessons,
-        levels: data.levels
+        levels: data.levels,
+        classrooms: data.classrooms,
+        targetSlot
       })
-      setAiClassPlan(plan)
-      setMessage(plan.provider === 'firebase-ai-logic'
-        ? `Gemini Flash-Lite sugirio ${plan.suggestions.length} acomodos.`
+      const nextPlan = {
+        ...plan,
+        groupId: slotGroup.id,
+        groupLabel: `${formatDateTime(slotGroup.startAt)} - ${slotGroup.studentIds.length}/8 estudiantes`
+      }
+      const initialClassCount = Math.max(1, Math.min(
+        getAiPlanMaxClasses(slotGroup),
+        plan.suggestions?.length || 1
+      ))
+
+      setAiClassPlan(nextPlan)
+      setAiPlanGroup(slotGroup)
+      setAiPlanClassCount(initialClassCount)
+      setAiPlanDrafts(buildAiPlanDrafts(slotGroup, plan.suggestions || [], initialClassCount))
+      setAiPlanCloseConfirm(false)
+      setIsAiPlanModalOpen(true)
+      setMessage(plan.provider === 'mistral-ai'
+        ? `La IA sugirio ${plan.suggestions.length} acomodo(s) para ${formatDateTime(slotGroup.startAt)}.`
         : `Se genero acomodo local: ${plan.summary}`)
     } catch (error) {
-      setMessage(error.message || 'No se pudo generar sugerencia Gemini.')
+      setMessage(error.message || 'No se pudo generar la sugerencia.')
     } finally {
       setAiClassLoading(false)
     }
-  }
-
-  const applyAiClassSuggestion = (suggestion) => {
-    const classItem = data.classes.find(item => item.id === suggestion.classId)
-    if (!classItem) return
-    const sourceClassIds = (suggestion.sourceClassIds?.length ? suggestion.sourceClassIds : [suggestion.classId])
-      .filter(classId => data.classes.some(item => item.id === classId))
-
-    editClass(classItem, {
-      lessonId: suggestion.lessonId || classItem.lessonIds?.[0] || '',
-      teacherId: '',
-      status: 'pendiente_asignacion',
-      sourceClassIds,
-      studentIds: suggestion.studentIds?.length ? suggestion.studentIds : classItem.studentIds
-    })
-    setMessage('Sugerencia cargada. Ahora asigna teacher y guarda la clase.')
   }
 
   const applySlotGroup = (slotGroup) => {
@@ -656,7 +1236,7 @@ function AdminDashboard() {
       sourceClassIds: slotGroup.sourceClassIds,
       studentIds: slotGroup.studentIds
     })
-    setMessage('Grupo por horario cargado. Elige leccion, asigna teacher y guarda una sola clase.')
+    setMessage('Grupo por horario cargado. Elige leccion, asigna teacher, classroom y guarda una sola clase.')
   }
 
   const submitAttendance = async (event) => {
@@ -715,6 +1295,86 @@ function AdminDashboard() {
     }))
   }
 
+  const updateListFilter = (key, patch) => {
+    setListFilters(prev => ({
+      ...prev,
+      [key]: {
+        ...prev[key],
+        ...patch
+      }
+    }))
+  }
+
+  const openPaymentCapture = (student, period, payment) => {
+    setPaymentCapture({
+      paymentId: payment?.id || '',
+      studentId: student.id,
+      publicId: student.publicId || '',
+      fullName: student.fullName || '',
+      dueDate: period.dueDate,
+      period: period.label,
+      amount: payment?.amount ?? paymentForm.amount ?? 0
+    })
+  }
+
+  const closePaymentCapture = () => {
+    setPaymentCapture(null)
+  }
+
+  const submitPaymentCapture = async (event) => {
+    event.preventDefault()
+    if (!paymentCapture) return
+
+    const payload = {
+      studentId: paymentCapture.studentId,
+      dueDate: paymentCapture.dueDate,
+      period: paymentCapture.period,
+      amount: Number(paymentCapture.amount || 0),
+      status: 'pagado',
+      paidAt: new Date().toISOString()
+    }
+
+    if (paymentCapture.paymentId) {
+      await updatePayment(paymentCapture.paymentId, payload)
+    } else {
+      await createPayment(payload)
+    }
+    closePaymentCapture()
+  }
+
+  const getGradeForLevel = (studentId, levelId) => (
+    data.grades.find(grade => grade.studentId === studentId && grade.levelId === levelId)
+  )
+
+  const updateGradeDraft = (studentId, levelId, patch) => {
+    const key = `${studentId}-${levelId}`
+    setGradeDrafts(prev => ({
+      ...prev,
+      [key]: {
+        ...(prev[key] || {}),
+        ...patch
+      }
+    }))
+  }
+
+  const submitGradeForLevel = async (studentId, levelId) => {
+    const key = `${studentId}-${levelId}`
+    const draft = gradeDrafts[key] || {}
+    await saveGrade({
+      id: key,
+      studentId,
+      levelId,
+      oral: draft.oral,
+      written: draft.written
+    })
+  }
+
+  const deleteGradeForLevel = async (studentId, levelId) => {
+    const existingGrade = getGradeForLevel(studentId, levelId)
+    if (!existingGrade?.id) return
+    await deleteGrade(existingGrade.id)
+  }
+
   const submitLevel = async (event) => {
     event.preventDefault()
     await createLevel(levelForm)
@@ -731,6 +1391,20 @@ function AdminDashboard() {
     })
     setLessonForm({ id: '', levelId: '', order: 1, name: '', estimatedHours: 1 })
   }
+
+  const renderListTools = (filterKey, orders = []) => (
+    <div className="table-tools">
+      <label className="form-field">
+        <span>Buscar</span>
+        <input
+          value={listFilters[filterKey]?.search || ''}
+          onChange={event => updateListFilter(filterKey, { search: event.target.value })}
+          placeholder="Buscar en esta tabla"
+        />
+      </label>
+      
+    </div>
+  )
 
   const renderMetrics = () => (
     <section className="dashboard-grid top-grid admin-metrics">
@@ -760,16 +1434,16 @@ function AdminDashboard() {
   const renderStudentsTab = () => (
     <section className="admin-tab-grid">
       <article className="panel-card admin-card">
-        <div className="admin-section-title">
-          <div>
-            <h2>Nuevo estudiante</h2>
-            <p>Admin crea el registro. Si no pones contrasena, el alumno la crea en su primer login.</p>
+          <div className="admin-section-title">
+            <div>
+              <h2>Nuevo estudiante</h2>
+              <p>Admin crea el registro. El alumno crea su contrasena desde el login.</p>
+            </div>
           </div>
-        </div>
         <form className="admin-form-grid" onSubmit={submitStudent}>
           <label className="form-field">
             <span>ID</span>
-            <input value={studentForm.publicId} onChange={event => setStudentForm(prev => ({ ...prev, publicId: event.target.value }))} placeholder="EST-006" required />
+            <input value={studentForm.publicId} onChange={event => setStudentForm(prev => ({ ...prev, publicId: event.target.value }))} placeholder="0252" required />
           </label>
           <label className="form-field span-2">
             <span>Nombre completo</span>
@@ -785,9 +1459,13 @@ function AdminDashboard() {
           </label>
           <label className="form-field">
             <span>Nivel actual</span>
-            <select value={studentForm.currentLevelId} onChange={event => setStudentForm(prev => ({ ...prev, currentLevelId: event.target.value, currentLessonId: '' }))} required>
+            <select value={studentForm.currentLevelId} onChange={event => {
+              const levelId = event.target.value
+              const firstLesson = getLessonsByLevel(levelId, data.lessons)[0]
+              setStudentForm(prev => ({ ...prev, currentLevelId: levelId, currentLessonId: firstLesson?.id || '' }))
+            }} required>
               <option value="">Seleccionar nivel</option>
-              {sortedLevels.map(level => <option value={level.id} key={level.id}>{level.shortName || level.name}</option>)}
+              {academicLevels.map(level => <option value={level.id} key={level.id}>{level.shortName || level.name}</option>)}
             </select>
           </label>
           <label className="form-field">
@@ -801,10 +1479,6 @@ function AdminDashboard() {
             <span>Fecha de inscripcion</span>
             <input type="date" value={studentForm.enrollmentDate} onChange={event => setStudentForm(prev => ({ ...prev, enrollmentDate: event.target.value }))} required />
           </label>
-          <label className="form-field">
-            <span>Contrasena inicial</span>
-            <input type="password" value={studentForm.password} onChange={event => setStudentForm(prev => ({ ...prev, password: event.target.value }))} placeholder="Minimo 6 caracteres" />
-          </label>
           <button className="btn btn-primary small-btn" type="submit" disabled={saving || !isAdmin}>Guardar estudiante</button>
         </form>
       </article>
@@ -817,14 +1491,19 @@ function AdminDashboard() {
               <p>Click en un estudiante para abrir su perfil.</p>
             </div>
           </div>
+          {renderListTools('students', [
+            { value: 'name-asc', label: 'Nombre A-Z' },
+            { value: 'id-asc', label: 'ID' },
+            { value: 'level-asc', label: 'Nivel' }
+          ])}
           <div className="record-list">
-            {sortedStudents.map(student => (
+            {visibleStudents.map(student => (
               <button className={selectedStudentId === student.id ? 'record-button active' : 'record-button'} key={student.id} type="button" onClick={() => setSelectedStudentId(student.id)}>
                 <strong>{student.fullName}</strong>
                 <span>{student.publicId} - {getLevel(student.currentLevelId, data.levels)?.shortName || 'Sin nivel'}</span>
               </button>
             ))}
-            {!sortedStudents.length && <p className="empty-state">Aun no hay estudiantes.</p>}
+            {!visibleStudents.length && <p className="empty-state">No hay estudiantes con ese filtro.</p>}
           </div>
         </article>
 
@@ -864,7 +1543,87 @@ function AdminDashboard() {
                 </div>
               </dl>
 
-              <ProgressBar value={studentDraft.progressPercent} label="Progreso del nivel" />
+              <div className="form-field section-gap">
+                <span>Lecciones registradas</span>
+                <details className="dropdown-checklist lesson-history-checklist">
+                  <summary>{selectedStudentRegisteredLessons.size} temas registrados para este alumno</summary>
+                  <div className="lesson-history-grid">
+                    {sortedLevels.map(level => (
+                      <div className="lesson-history-group" key={level.id}>
+                        <strong>{level.shortName || level.name}</strong>
+                        {getLessonsByLevel(level.id, data.lessons).map(lesson => (
+                          <label className="lesson-history-row" key={lesson.id}>
+                            <input type="checkbox" checked={selectedStudentRegisteredLessons.has(lesson.id)} readOnly />
+                            <span>{lesson.order}. {lesson.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              </div>
+
+              <div className="section-gap">
+                <div className="admin-section-title">
+                  <div>
+                    <h3>Calificaciones por nivel</h3>
+                    <p>Solo admin captura examen oral y escrito de cada nivel.</p>
+                  </div>
+                </div>
+                <div className="excel-scroll">
+                  <table className="excel-grid-table grades-admin-table">
+                    <thead>
+                      <tr>
+                        <th>Nivel</th>
+                        <th>Oral</th>
+                        <th>Escrito</th>
+                        <th>Estado</th>
+                        <th>Accion</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {academicLevels.map(level => {
+                        const key = `${selectedStudent.id}-${level.id}`
+                        const draft = gradeDrafts[key] || {}
+                        const existingGrade = getGradeForLevel(selectedStudent.id, level.id)
+                        const captured = existingGrade?.oral != null || existingGrade?.written != null
+                        return (
+                          <tr key={level.id}>
+                            <td>{level.shortName || level.name}</td>
+                            <td>
+                              <input
+                                className="table-input"
+                                type="number"
+                                min="0"
+                                max="100"
+                                value={draft.oral ?? ''}
+                                onChange={event => updateGradeDraft(selectedStudent.id, level.id, { oral: event.target.value })}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                className="table-input"
+                                type="number"
+                                min="0"
+                                max="100"
+                                value={draft.written ?? ''}
+                                onChange={event => updateGradeDraft(selectedStudent.id, level.id, { written: event.target.value })}
+                              />
+                            </td>
+                            <td>{captured ? 'Capturada' : 'Pendiente'}</td>
+                            <td>
+                              <div className="table-actions">
+                                <button className="btn btn-primary small-btn" type="button" onClick={() => submitGradeForLevel(selectedStudent.id, level.id)} disabled={saving || !isAdmin}>Guardar</button>
+                                {captured && <button className="btn btn-secondary small-btn danger-btn" type="button" onClick={() => deleteGradeForLevel(selectedStudent.id, level.id)} disabled={saving || !isAdmin}>Borrar</button>}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
 
               <form className="admin-form-grid profile-form" onSubmit={submitStudentUpdate}>
                 <label className="form-field">
@@ -885,9 +1644,13 @@ function AdminDashboard() {
                 </label>
                 <label className="form-field">
                   <span>Nivel actual</span>
-                  <select value={studentDraft.currentLevelId} onChange={event => setStudentDraft(prev => ({ ...prev, currentLevelId: event.target.value, currentLessonId: '' }))} required>
+                  <select value={studentDraft.currentLevelId} onChange={event => {
+                    const levelId = event.target.value
+                    const firstLesson = getLessonsByLevel(levelId, data.lessons)[0]
+                    setStudentDraft(prev => ({ ...prev, currentLevelId: levelId, currentLessonId: firstLesson?.id || '' }))
+                  }} required>
                     <option value="">Seleccionar nivel</option>
-                    {sortedLevels.map(level => <option value={level.id} key={level.id}>{level.shortName || level.name}</option>)}
+                    {academicLevels.map(level => <option value={level.id} key={level.id}>{level.shortName || level.name}</option>)}
                   </select>
                 </label>
                 <label className="form-field">
@@ -900,10 +1663,6 @@ function AdminDashboard() {
                 <label className="form-field">
                   <span>Fecha de inscripcion</span>
                   <input type="date" value={studentDraft.enrollmentDate} onChange={event => setStudentDraft(prev => ({ ...prev, enrollmentDate: event.target.value }))} required />
-                </label>
-                <label className="form-field">
-                  <span>Progreso %</span>
-                  <input type="number" min="0" max="100" value={studentDraft.progressPercent} onChange={event => setStudentDraft(prev => ({ ...prev, progressPercent: event.target.value }))} />
                 </label>
                 <label className="form-field">
                   <span>Estatus</span>
@@ -931,7 +1690,7 @@ function AdminDashboard() {
         <div className="admin-section-title">
           <div>
             <h2>CRUD Teachers</h2>
-            <p>Admin crea ID, nombre y correo. Si no hay contrasena, el teacher la crea en su primer login.</p>
+            <p>Admin crea ID, nombre y correo. El teacher crea su contrasena desde el login.</p>
           </div>
           <button className="btn btn-secondary small-btn" type="button" onClick={seedTeachers} disabled={saving || !isAdmin}>Crear 5 base</button>
         </div>
@@ -949,15 +1708,15 @@ function AdminDashboard() {
             <span>Correo</span>
             <input type="email" value={teacherForm.email} onChange={event => setTeacherForm(prev => ({ ...prev, email: event.target.value }))} placeholder="teacher@innova-t.com" />
           </label>
-          <label className="form-field">
-            <span>Contrasena inicial</span>
-            <input type="password" value={teacherForm.password} onChange={event => setTeacherForm(prev => ({ ...prev, password: event.target.value }))} placeholder="Minimo 6 caracteres" />
-          </label>
           <button className="btn btn-primary small-btn" type="submit" disabled={saving || !isAdmin}>Agregar teacher</button>
         </form>
 
         <div className="teacher-list section-gap">
-          {sortedTeachers.map(teacher => {
+          {renderListTools('teachers', [
+            { value: 'name-asc', label: 'Nombre A-Z' },
+            { value: 'id-asc', label: 'ID' }
+          ])}
+          {visibleTeachers.map(teacher => {
             const draft = teacherDrafts[teacher.id] || {}
             return (
               <div className="teacher-row" key={teacher.id}>
@@ -969,7 +1728,7 @@ function AdminDashboard() {
               </div>
             )
           })}
-          {!sortedTeachers.length && <p className="empty-state">Aun no hay teachers. Usa Crear 5 base o agrega uno con correo.</p>}
+          {!visibleTeachers.length && <p className="empty-state">No hay teachers con ese filtro.</p>}
         </div>
       </article>
     </section>
@@ -1021,32 +1780,341 @@ function AdminDashboard() {
         <div className="admin-section-title">
           <div>
             <h2>Pagos registrados</h2>
-            <p>Actualiza estatus o elimina registros financieros.</p>
+            <p>Tabla tipo Excel por estudiante y mensualidad desde su fecha de inscripcion.</p>
           </div>
         </div>
-        <div className="stack-list">
-          {data.payments.map(payment => {
-            const student = data.students.find(item => item.id === payment.studentId)
-            const overdue = insights.overduePayments.some(item => item.id === payment.id)
-            return (
-              <div className="list-row" key={payment.id}>
-                <div>
-                  <strong>{student?.fullName || payment.studentId}</strong>
-                  <small>{payment.period} - vence {formatDateInputLabel(payment.dueDate)} - ${payment.amount || 0}</small>
-                </div>
-                <div className="row-actions">
-                  <StatusBadge severity={payment.status === 'pagado' ? 'ok' : overdue ? 'risk' : 'warning'}>{payment.status === 'pagado' ? 'Pagado' : overdue ? 'Vencido' : 'Pendiente'}</StatusBadge>
-                  <button className="btn btn-secondary small-btn" type="button" onClick={() => updatePayment(payment.id, { ...payment, status: payment.status === 'pagado' ? 'pendiente' : 'pagado' })} disabled={saving || !isAdmin}>Cambiar</button>
-                  <button className="btn btn-secondary small-btn danger-btn" type="button" onClick={() => deletePayment(payment.id)} disabled={saving || !isAdmin}>Eliminar</button>
-                </div>
-              </div>
-            )
-          })}
-          {!data.payments.length && <p className="empty-state">Aun no hay pagos.</p>}
+        <dl className="compact-facts three-columns">
+          <div>
+            <dt>Ingresos totales</dt>
+            <dd>${paymentTotals.total.toLocaleString('es-MX')}</dd>
+          </div>
+          <div>
+            <dt>Ingresos del mes</dt>
+            <dd>${paymentTotals.month.toLocaleString('es-MX')}</dd>
+          </div>
+          <div>
+            <dt>Pagos capturados</dt>
+            <dd>{paymentTotals.count}</dd>
+          </div>
+        </dl>
+
+        {renderListTools('payments', [
+          { value: 'name-asc', label: 'Nombre A-Z' },
+          { value: 'id-asc', label: 'ID' },
+          { value: 'overdue-first', label: 'Vencidos primero' }
+        ])}
+
+        <div className="excel-scroll section-gap">
+          <table className="excel-grid-table payments-ledger-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Nombre</th>
+                {Array.from({ length: PAYMENT_MONTH_COLUMNS }, (_, index) => <th key={index}>Mes {index + 1}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {visiblePaymentStudents.map(student => {
+                const periods = buildEnrollmentPeriods(student)
+                return (
+                  <tr key={student.id}>
+                    <td>{student.publicId}</td>
+                    <td>{student.fullName}</td>
+                    {periods.map(period => {
+                      const payment = paymentsByStudentDueDate.get(getPaymentKey(student.id, period.dueDate))
+                      const paid = isPaymentPaid(payment)
+                      const overdue = !paid && period.dueDate < todayMexico
+                      return (
+                        <td className={paid ? 'payment-month paid' : overdue ? 'payment-month overdue' : 'payment-month pending'} key={period.dueDate}>
+                          <button className="payment-cell-button" type="button" onClick={() => openPaymentCapture(student, period, payment)}>
+                            <span className="payment-check">
+                              <input type="checkbox" checked={paid} readOnly />
+                            </span>
+                            <strong>{paid ? 'Pagado' : overdue ? 'Vencido' : 'Pendiente'}</strong>
+                            <small>{period.label}</small>
+                          </button>
+                        </td>
+                      )
+                    })}
+                  </tr>
+                )
+              })}
+              {!visiblePaymentStudents.length && (
+                <tr>
+                  <td colSpan={PAYMENT_MONTH_COLUMNS + 2}>No hay estudiantes con ese filtro.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </article>
     </section>
   )
+
+  const renderClassModal = () => {
+    if (!isClassModalOpen) return null
+
+    return (
+      <div className="modal-backdrop" role="presentation">
+        <section className="modal-card panel-card admin-card" role="dialog" aria-modal="true" aria-labelledby="class-modal-title">
+          <div className="admin-section-title">
+            <div>
+              <h2 id="class-modal-title">{editingClassId ? 'Formar / editar clase' : 'Crear clase'}</h2>
+              <p>Selecciona leccion, teacher, classroom y hasta 8 alumnos.</p>
+            </div>
+            <div className="row-actions">
+              {classLevel && <StatusBadge severity="info">{classLevel.shortName}</StatusBadge>}
+              <button className="btn btn-secondary small-btn" type="button" onClick={closeClassModal}>Cerrar</button>
+            </div>
+          </div>
+
+          <form className="admin-form-grid" onSubmit={submitClass}>
+            <label className="form-field span-2">
+              <span>Leccion</span>
+              <select value={classForm.lessonId} onChange={event => setClassForm(prev => ({ ...prev, lessonId: event.target.value }))} required>
+                <option value="">Seleccionar leccion</option>
+                {sortedLevels.map(level => (
+                  <optgroup label={level.shortName || level.name} key={level.id}>
+                    {getLessonsByLevel(level.id, data.lessons).map(lesson => (
+                      <option value={lesson.id} key={lesson.id}>{level.shortName || level.name} - {lesson.order}. {lesson.name}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </label>
+            <label className="form-field">
+              <span>Teacher</span>
+              <select value={classForm.teacherId} onChange={event => setClassForm(prev => ({ ...prev, teacherId: event.target.value }))} required>
+                <option value="">Seleccionar teacher</option>
+                {sortedTeachers.map(teacher => <option value={teacher.id} key={teacher.id}>{teacher.name}</option>)}
+              </select>
+            </label>
+            <label className="form-field">
+              <span>Classroom</span>
+              <select value={classForm.classroomId} onChange={event => setClassForm(prev => ({ ...prev, classroomId: event.target.value }))} required>
+                <option value="">Seleccionar classroom</option>
+                {activeClassrooms.map(classroom => <option value={classroom.id} key={classroom.id}>{classroom.name}</option>)}
+              </select>
+            </label>
+            <label className="form-field">
+              <span>Fecha</span>
+              <input type="date" value={classForm.date} onChange={event => setClassForm(prev => ({ ...prev, date: event.target.value }))} required />
+            </label>
+            <label className="form-field">
+              <span>Hora</span>
+              <select value={classForm.time} onChange={event => setClassForm(prev => ({ ...prev, time: event.target.value }))} required>
+                {classTimeOptions.map(time => <option value={time} key={time}>{formatTimeLabel(time)}</option>)}
+              </select>
+            </label>
+            <div className="form-field span-2">
+              <span>Estudiantes</span>
+              <details className="dropdown-checklist" open>
+                <summary>{classStudentIds.length}/8 estudiantes seleccionados</summary>
+                <div className="attendance-check-grid compact-check-grid">
+                  {sortedStudents.map(student => {
+                    const checked = classStudentIds.includes(student.id)
+                    return (
+                      <label className="attendance-check" key={student.id}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={!checked && classStudentIds.length >= 8}
+                          onChange={event => toggleClassStudent(student.id, event.target.checked)}
+                        />
+                        <span>
+                          <strong>{student.fullName}</strong>
+                          <small>{student.publicId}</small>
+                        </span>
+                      </label>
+                    )
+                  })}
+                </div>
+              </details>
+            </div>
+            <div className="row-actions form-wide-actions">
+              <button className="btn btn-primary small-btn" type="submit" disabled={saving}>{editingClassId ? 'Guardar clase' : 'Crear clase'}</button>
+              <button className="btn btn-secondary small-btn" type="button" onClick={closeClassModal}>Cancelar</button>
+            </div>
+          </form>
+        </section>
+      </div>
+    )
+  }
+
+  const renderPaymentCaptureModal = () => {
+    if (!paymentCapture) return null
+
+    return (
+      <div className="modal-backdrop" role="presentation">
+        <section className="modal-card panel-card admin-card payment-capture-modal" role="dialog" aria-modal="true" aria-labelledby="payment-capture-title">
+          <div className="admin-section-title">
+            <div>
+              <h2 id="payment-capture-title">Registrar pago</h2>
+              <p>{paymentCapture.publicId} - {paymentCapture.fullName}</p>
+            </div>
+            <button className="btn btn-secondary small-btn" type="button" onClick={closePaymentCapture}>Cerrar</button>
+          </div>
+
+          <form className="admin-form-grid" onSubmit={submitPaymentCapture}>
+            <label className="form-field span-2">
+              <span>Mensualidad</span>
+              <input value={paymentCapture.period} readOnly />
+            </label>
+            <label className="form-field">
+              <span>Monto pagado</span>
+              <input
+                type="number"
+                min="0"
+                value={paymentCapture.amount}
+                onChange={event => setPaymentCapture(prev => ({ ...prev, amount: event.target.value }))}
+                required
+              />
+            </label>
+            <div className="row-actions form-wide-actions">
+              <button className="btn btn-primary small-btn" type="submit" disabled={saving || !isAdmin}>Aceptar y marcar pagado</button>
+              <button className="btn btn-secondary small-btn" type="button" onClick={closePaymentCapture}>Cancelar</button>
+            </div>
+          </form>
+        </section>
+      </div>
+    )
+  }
+
+  const renderAiPlanModal = () => {
+    if (!isAiPlanModalOpen || !aiPlanGroup) return null
+
+    const maxClasses = getAiPlanMaxClasses(aiPlanGroup)
+    const groupStudents = aiPlanGroup.students?.length
+      ? aiPlanGroup.students
+      : aiPlanGroup.studentIds.map(studentId => sortedStudents.find(student => student.id === studentId)).filter(Boolean)
+
+    return (
+      <div className="modal-backdrop" role="presentation">
+        <section className="modal-card panel-card admin-card ai-plan-modal" role="dialog" aria-modal="true" aria-labelledby="ai-plan-modal-title">
+          <div className="admin-section-title">
+            <div>
+              <h2 id="ai-plan-modal-title">Propuesta IA para formar clases</h2>
+              <p>{formatDateTime(aiPlanGroup.startAt)}. Puedes formar hasta {maxClasses} {maxClasses === 1 ? 'clase' : 'clases'} por los classrooms activos.</p>
+            </div>
+            <div className="row-actions">
+              <StatusBadge severity={aiClassPlan?.provider === 'mistral-ai' || aiClassPlan?.provider === 'firebase-ai-logic' ? 'ok' : 'warning'}>
+                Asistente academico
+              </StatusBadge>
+              <button className="btn btn-secondary small-btn" type="button" onClick={requestCloseAiPlanModal}>
+                {aiPlanCloseConfirm ? 'Cerrar de todos modos' : 'Cerrar'}
+              </button>
+            </div>
+          </div>
+
+          {aiPlanCloseConfirm && (
+            <p className="system-message modal-warning">
+              Hay una propuesta sin guardar. Si cierras se descartan los cambios de esta ventana.
+            </p>
+          )}
+
+          <div className="highlight-panel">
+            <div className="admin-section-title">
+              <div>
+                <h3>Resumen</h3>
+                <p>{aiClassPlan?.summary || 'Ajusta la propuesta antes de guardar.'}</p>
+              </div>
+              <label className="form-field compact-select">
+                <span>Clases a formar</span>
+                <select value={aiPlanClassCount} onChange={event => setAiDraftClassCount(event.target.value)}>
+                  {Array.from({ length: maxClasses }, (_, index) => index + 1).map(count => (
+                    <option value={count} key={count}>{count}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {aiClassPlan?.warnings?.map(warning => <p className="system-message" key={warning}>{warning}</p>)}
+          </div>
+
+          <div className="ai-draft-grid section-gap">
+            {aiPlanDrafts.map((draft, draftIndex) => {
+              const lesson = getLesson(draft.lessonId, data.lessons)
+
+              return (
+                <article className="ai-draft-card" key={draft.id}>
+                  <div className="admin-section-title">
+                    <div>
+                      <h3>{draft.title}</h3>
+                      <p>{draft.studentIds.length}/8 alumnos - confianza {Math.round((draft.confidence || 0) * 100)}%</p>
+                    </div>
+                    {lesson && <StatusBadge severity="info">{getLevel(lesson.levelId, data.levels)?.shortName || 'Tema'}</StatusBadge>}
+                  </div>
+
+                  <div className="admin-form-grid ai-draft-controls">
+                    <label className="form-field span-2">
+                      <span>Tema / leccion</span>
+                      <select value={draft.lessonId} onChange={event => updateAiPlanDraft(draft.id, { lessonId: event.target.value })} required>
+                        <option value="">Seleccionar tema</option>
+                        {sortedLevels.map(level => (
+                          <optgroup label={level.shortName || level.name} key={level.id}>
+                            {getLessonsByLevel(level.id, data.lessons).map(lessonItem => (
+                              <option value={lessonItem.id} key={lessonItem.id}>{level.shortName || level.name} - {lessonItem.order}. {lessonItem.name}</option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="form-field">
+                      <span>Teacher</span>
+                      <select value={draft.teacherId} onChange={event => updateAiPlanDraft(draft.id, { teacherId: event.target.value })} required>
+                        <option value="">Seleccionar teacher</option>
+                        {sortedTeachers.map(teacher => <option value={teacher.id} key={teacher.id}>{teacher.name}</option>)}
+                      </select>
+                    </label>
+                    <label className="form-field">
+                      <span>Classroom</span>
+                      <select value={draft.classroomId} onChange={event => updateAiPlanDraft(draft.id, { classroomId: event.target.value })} required>
+                        <option value="">Seleccionar classroom</option>
+                        {activeClassrooms.map(classroom => <option value={classroom.id} key={classroom.id}>{classroom.name}</option>)}
+                      </select>
+                    </label>
+                  </div>
+
+                  <details className="dropdown-checklist ai-student-picker" open>
+                    <summary>Alumnos de esta clase</summary>
+                    <div className="attendance-check-grid compact-check-grid">
+                      {groupStudents.map(student => {
+                        const checked = draft.studentIds.includes(student.id)
+                        return (
+                          <label className="attendance-check" key={`${draft.id}-${student.id}`}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={!checked && draft.studentIds.length >= 8}
+                              onChange={event => toggleAiPlanDraftStudent(draft.id, student.id, event.target.checked)}
+                            />
+                            <span>
+                              <strong>{student.publicId} - {student.fullName}</strong>
+                              <small>{getLevel(student.currentLevelId, data.levels)?.shortName || 'Sin nivel'}</small>
+                            </span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </details>
+
+                  <p className="ai-draft-reason">{draft.reason || `Clase ${draftIndex + 1} propuesta por IA.`}</p>
+                </article>
+              )
+            })}
+          </div>
+
+          <div className="row-actions form-wide-actions">
+            <button className="btn btn-primary" type="button" onClick={submitAiPlanClasses} disabled={saving}>
+              Guardar clases formadas
+            </button>
+            <button className="btn btn-secondary" type="button" onClick={requestCloseAiPlanModal}>
+              {aiPlanCloseConfirm ? 'Cerrar sin guardar' : 'Cancelar'}
+            </button>
+          </div>
+        </section>
+      </div>
+    )
+  }
 
   const renderClassesTab = () => (
     <section className="admin-tab-grid">
@@ -1054,45 +2122,12 @@ function AdminDashboard() {
         <div className="admin-section-title">
           <div>
             <h2>Reservas por asignar</h2>
-            <p>Alumnos reservan horario y leccion; Admin forma la clase final con teacher.</p>
+            <p>IA propone grupos y tema; Admin asigna teacher y classroom.</p>
           </div>
           <div className="row-actions">
-            <StatusBadge severity={pendingAssignmentSlotGroups.length ? 'warning' : 'ok'}>{pendingAssignmentSlotGroups.length} horarios / {pendingAssignmentClasses.length} reservas</StatusBadge>
-            <button className="btn btn-secondary small-btn" type="button" onClick={requestGeminiClassPlan} disabled={aiClassLoading || !pendingAssignmentClasses.length}>
-              {aiClassLoading ? 'Pensando...' : 'Sugerir con Gemini Flash-Lite'}
-            </button>
+            <StatusBadge severity={pendingAssignmentSlotGroups.length ? 'warning' : 'ok'}>{pendingAssignmentSlotGroups.length} bloques / {pendingAssignmentClasses.length} reservas</StatusBadge>
           </div>
         </div>
-        {aiClassPlan && (
-          <div className="highlight-panel section-gap">
-            <div className="admin-section-title">
-              <div>
-                <h3>Propuesta Gemini</h3>
-                <p>{aiClassPlan.summary}</p>
-              </div>
-              <StatusBadge severity={aiClassPlan.provider === 'firebase-ai-logic' ? 'ok' : 'warning'}>{aiClassPlan.model}</StatusBadge>
-            </div>
-            <div className="stack-list">
-              {aiClassPlan.suggestions.map(suggestion => {
-                const lesson = getLesson(suggestion.lessonId, data.lessons)
-                const sourceClass = data.classes.find(item => item.id === suggestion.classId)
-                const sourceCount = suggestion.sourceClassIds?.length || 1
-                return (
-                  <div className="list-row" key={`${suggestion.classId}-${suggestion.lessonId || 'sin-leccion'}`}>
-                    <div>
-                      <strong>{lesson?.name || 'Sin leccion viable'}</strong>
-                      <small>{suggestion.studentIds.length}/8 alumnos - {sourceCount} reservas fusionadas - {formatClassHours(sourceClass)} - confianza {Math.round((suggestion.confidence || 0) * 100)}% - {suggestion.reason}</small>
-                    </div>
-                    <button className="btn btn-primary small-btn" type="button" onClick={() => applyAiClassSuggestion(suggestion)}>
-                      Cargar propuesta
-                    </button>
-                  </div>
-                )
-              })}
-              {aiClassPlan.warnings.map(warning => <p className="system-message" key={warning}>{warning}</p>)}
-            </div>
-          </div>
-        )}
         <div className="stack-list">
           {pendingAssignmentSlotGroups.map(group => {
             const levels = uniqueValues(group.students.map(student => getLevel(student.currentLevelId, data.levels)?.shortName || 'Sin nivel'))
@@ -1107,9 +2142,14 @@ function AdminDashboard() {
                     ))}
                   </div>
                 </div>
-                <button className="btn btn-primary small-btn" type="button" onClick={() => applySlotGroup(group)}>
-                  Formar una clase
-                </button>
+                <div className="row-actions">
+                  <button className="btn btn-secondary small-btn" type="button" onClick={() => requestMistralClassPlan(group)} disabled={aiClassLoading}>
+                    {aiClassLoading ? 'Pensando...' : 'Sugerir con IA'}
+                  </button>
+                  <button className="btn btn-primary small-btn" type="button" onClick={() => applySlotGroup(group)}>
+                    Formar una clase
+                  </button>
+                </div>
               </div>
             )
           })}
@@ -1120,73 +2160,35 @@ function AdminDashboard() {
       <article className="panel-card admin-card">
         <div className="admin-section-title">
           <div>
-            <h2>{editingClassId ? 'Formar / editar clase' : 'Crear clase manual'}</h2>
-            <p>Selecciona leccion, teacher y hasta 8 alumnos. Al guardar, siempre queda programada.</p>
+            <h2>Reservas por estudiantes</h2>
+            <p>Vista rapida por alumno para validar cuantas horas pidio antes de formar clases.</p>
           </div>
-          {classLevel && <StatusBadge severity="info">{classLevel.shortName}</StatusBadge>}
         </div>
-
-        <form className="admin-form-grid" onSubmit={submitClass}>
-          <label className="form-field span-2">
-            <span>Leccion</span>
-            <select value={classForm.lessonId} onChange={event => setClassForm(prev => ({ ...prev, lessonId: event.target.value }))} required>
-              <option value="">Seleccionar leccion</option>
-              {sortedLevels.map(level => (
-                <optgroup label={level.shortName || level.name} key={level.id}>
-                  {getLessonsByLevel(level.id, data.lessons).map(lesson => (
-                    <option value={lesson.id} key={lesson.id}>{level.shortName || level.name} - {lesson.order}. {lesson.name}</option>
-                  ))}
-                </optgroup>
+        <div className="excel-scroll">
+          <table className="excel-grid-table reservation-student-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Nombre</th>
+                <th>Horas reservadas</th>
+              </tr>
+            </thead>
+            <tbody>
+              {reservationStudentRows.map(row => (
+                <tr key={`${row.studentId}-${row.date}-${row.time}`}>
+                  <td>{row.publicId}</td>
+                  <td>{row.fullName}</td>
+                  <td>{row.hours} {getHourWord(row.hours)}</td>
+                </tr>
               ))}
-            </select>
-          </label>
-          <label className="form-field">
-            <span>Teacher</span>
-            <select value={classForm.teacherId} onChange={event => setClassForm(prev => ({ ...prev, teacherId: event.target.value }))} required>
-              <option value="">Seleccionar teacher</option>
-              {sortedTeachers.map(teacher => <option value={teacher.id} key={teacher.id}>{teacher.name}</option>)}
-            </select>
-          </label>
-          <label className="form-field">
-            <span>Fecha</span>
-            <input type="date" value={classForm.date} onChange={event => setClassForm(prev => ({ ...prev, date: event.target.value }))} required />
-          </label>
-          <label className="form-field">
-            <span>Hora</span>
-            <select value={classForm.time} onChange={event => setClassForm(prev => ({ ...prev, time: event.target.value }))} required>
-              {classTimeOptions.map(time => <option value={time} key={time}>{time}</option>)}
-            </select>
-          </label>
-          <div className="form-field span-2">
-            <span>Estudiantes</span>
-            <details className="dropdown-checklist">
-              <summary>{classStudentIds.length}/8 estudiantes seleccionados</summary>
-              <div className="attendance-check-grid compact-check-grid">
-                {sortedStudents.map(student => {
-                  const checked = classStudentIds.includes(student.id)
-                  return (
-                    <label className="attendance-check" key={student.id}>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        disabled={!checked && classStudentIds.length >= 8}
-                        onChange={event => toggleClassStudent(student.id, event.target.checked)}
-                      />
-                      <span>
-                        <strong>{student.fullName}</strong>
-                        <small>{student.publicId}</small>
-                      </span>
-                    </label>
-                  )
-                })}
-              </div>
-            </details>
-          </div>
-          <div className="row-actions form-wide-actions">
-            <button className="btn btn-primary small-btn" type="submit" disabled={saving}>{editingClassId ? 'Actualizar clase' : 'Guardar clase'}</button>
-            {editingClassId && <button className="btn btn-secondary small-btn" type="button" onClick={resetClassForm}>Cancelar edicion</button>}
-          </div>
-        </form>
+              {!reservationStudentRows.length && (
+                <tr>
+                  <td colSpan="3">No hay reservas pendientes por estudiante.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </article>
 
       <article className="panel-card admin-card">
@@ -1196,15 +2198,20 @@ function AdminDashboard() {
             <p>Reservas pendientes, clases formadas por admin y correcciones manuales.</p>
           </div>
         </div>
+        {renderListTools('classes', [
+          { value: 'date-asc', label: 'Fecha proxima' },
+          { value: 'date-desc', label: 'Fecha reciente' },
+          { value: 'teacher-asc', label: 'Teacher' }
+        ])}
         <div className="stack-list">
-          {classesByRecentDate.map(classItem => {
+          {visibleClassesByRecentDate.map(classItem => {
             const lesson = getLesson(classItem.lessonIds?.[0], data.lessons)
             const level = getLevel(classItem.levelId || lesson?.levelId, data.levels)
             return (
               <div className="list-row" key={classItem.id}>
                 <div>
                   <strong>{level?.shortName || 'Nivel'} - {lesson?.name || 'Sin leccion'}</strong>
-                  <small>{formatDateTime(classItem.startAt)} - {formatClassHours(classItem)} - {classItem.teacherName || 'Sin teacher'} - {classItem.studentIds?.length || 0}/8 estudiantes - {classItem.reservationSource || 'manual'}</small>
+                  <small>{formatDateTime(classItem.startAt)} - {formatClassHours(classItem)} - {classItem.teacherName || 'Sin teacher'} - {classItem.classroomName || classItem.room || 'Sin classroom'} - {classItem.studentIds?.length || 0}/8 estudiantes - {classItem.reservationSource || 'manual'}</small>
                 </div>
                 <div className="row-actions">
                   <StatusBadge severity={getEffectiveClassStatus(classItem) === 'pendiente_asignacion' ? 'warning' : getEffectiveClassStatus(classItem) === 'cancelada' ? 'risk' : getEffectiveClassStatus(classItem) === 'completada' ? 'ok' : 'info'}>{getEffectiveClassStatus(classItem)}</StatusBadge>
@@ -1214,7 +2221,43 @@ function AdminDashboard() {
               </div>
             )
           })}
-          {!classesByRecentDate.length && <p className="empty-state">Aun no hay clases. Se crearan cuando los alumnos reserven.</p>}
+          {!visibleClassesByRecentDate.length && <p className="empty-state">No hay clases con ese filtro.</p>}
+        </div>
+      </article>
+
+      <article className="panel-card admin-card">
+        <div className="admin-section-title">
+          <div>
+            <h2>Classrooms</h2>
+            <p>Salones disponibles para que admin los asigne a clases formadas.</p>
+          </div>
+          <button className="btn btn-secondary small-btn" type="button" onClick={seedClassrooms} disabled={saving || !isAdmin}>Crear 3 base</button>
+        </div>
+
+        <form className="admin-form-grid" onSubmit={submitClassroom}>
+          <label className="form-field span-2">
+            <span>Nombre</span>
+            <input value={classroomForm.name} onChange={event => setClassroomForm(prev => ({ ...prev, name: event.target.value }))} placeholder="Classroom 1" required />
+          </label>
+          <button className="btn btn-primary small-btn" type="submit" disabled={saving}>Agregar classroom</button>
+        </form>
+
+        <div className="teacher-list section-gap">
+          {sortedClassrooms.map(classroom => {
+            const draft = classroomDrafts[classroom.id] || {}
+            return (
+              <div className="teacher-row classroom-row" key={classroom.id}>
+                <input value={draft.name || ''} onChange={event => setClassroomDrafts(prev => ({ ...prev, [classroom.id]: { ...draft, name: event.target.value } }))} />
+                <label className="inline-check">
+                  <input type="checkbox" checked={draft.active !== false} onChange={event => setClassroomDrafts(prev => ({ ...prev, [classroom.id]: { ...draft, active: event.target.checked } }))} />
+                  <span>Activo</span>
+                </label>
+                <button className="btn btn-secondary small-btn" type="button" onClick={() => updateClassroom(classroom.id, draft)} disabled={saving}>Guardar</button>
+                <button className="btn btn-secondary small-btn danger-btn" type="button" onClick={() => deleteClassroom(classroom.id)} disabled={saving || !isAdmin}>Eliminar</button>
+              </div>
+            )
+          })}
+          {!sortedClassrooms.length && <p className="empty-state">Aun no hay classrooms. Usa Crear 3 base o agrega uno.</p>}
         </div>
       </article>
 
@@ -1242,7 +2285,7 @@ function AdminDashboard() {
               <span>Hora</span>
               <select value={blockoutForm.time} onChange={event => setBlockoutForm(prev => ({ ...prev, time: event.target.value }))} required>
                 <option value="">Seleccionar hora</option>
-                {blockoutTimeOptions.map(time => <option value={time} key={time}>{time}</option>)}
+                {blockoutTimeOptions.map(time => <option value={time} key={time}>{formatTimeLabel(time)}</option>)}
               </select>
             </label>
           )}
@@ -1256,7 +2299,7 @@ function AdminDashboard() {
           {sortedBlockouts.map(blockout => (
             <div className="list-row" key={blockout.id}>
               <div>
-                <strong>{formatDateInputLabel(blockout.date)} - {blockout.allDay ? 'Dia completo' : blockout.time}</strong>
+                <strong>{formatDateInputLabel(blockout.date)} - {blockout.allDay ? 'Dia completo' : formatTimeLabel(blockout.time)}</strong>
                 <small>{blockout.reason || 'Sin motivo'}</small>
               </div>
               <button className="btn btn-secondary small-btn danger-btn" type="button" onClick={() => deleteBlockout(blockout.id)} disabled={saving || !isAdmin}>Eliminar</button>
@@ -1276,6 +2319,11 @@ function AdminDashboard() {
           <p>Tabla tipo Excel ordenada por alumno. El teacher pasa lista; admin corrige si hace falta.</p>
         </div>
       </div>
+      {renderListTools('attendance', [
+        { value: 'name-asc', label: 'Alumno A-Z' },
+        { value: 'date-desc', label: 'Fecha reciente' },
+        { value: 'missed-first', label: 'Faltas primero' }
+      ])}
 
       <table className="excel-grid-table">
         <thead>
@@ -1291,7 +2339,7 @@ function AdminDashboard() {
           </tr>
         </thead>
         <tbody>
-          {attendanceRows.map(record => (
+          {visibleAttendanceRows.map(record => (
             <tr key={record.id}>
               <td>{record.studentName}</td>
               <td>{record.publicId}</td>
@@ -1308,9 +2356,9 @@ function AdminDashboard() {
               </td>
             </tr>
           ))}
-          {!attendanceRows.length && (
+          {!visibleAttendanceRows.length && (
             <tr>
-              <td colSpan="8">Aun no hay asistencia registrada por teachers.</td>
+              <td colSpan="8">No hay asistencias con ese filtro.</td>
             </tr>
           )}
         </tbody>
@@ -1378,6 +2426,10 @@ function AdminDashboard() {
             <p>Las reservas automaticas usan estas lecciones para detectar nivel y clase siguiente.</p>
           </div>
         </div>
+        {renderListTools('catalog', [
+          { value: 'level-asc', label: 'Nivel y orden' },
+          { value: 'name-asc', label: 'Nombre A-Z' }
+        ])}
         <form className="admin-form-grid" onSubmit={submitLesson}>
           <label className="form-field">
             <span>ID opcional</span>
@@ -1401,7 +2453,7 @@ function AdminDashboard() {
           <button className="btn btn-primary small-btn" type="submit" disabled={saving || !isAdmin}>Guardar leccion</button>
         </form>
         <div className="stack-list section-gap">
-          {sortedLessons.map(lesson => {
+          {visibleSortedLessons.map(lesson => {
             const draft = lessonDrafts[lesson.id] || {}
             return (
               <div className="catalog-row lesson-row" key={lesson.id}>
@@ -1416,6 +2468,7 @@ function AdminDashboard() {
               </div>
             )
           })}
+          {!visibleSortedLessons.length && <p className="empty-state">No hay lecciones con ese filtro.</p>}
         </div>
       </article>
     </section>
@@ -1434,13 +2487,7 @@ function AdminDashboard() {
     <div className="dashboard-body admin-system excel-system">
       <div className="dashboard-shell">
         <aside className="sidebar admin-sidebar">
-          <Link className="brand" to="/">
-            <span className="brand-mark">IT</span>
-            <span>
-              <strong>Innova-T</strong>
-              <small>Admin System</small>
-            </span>
-          </Link>
+          <BrandLogo panel="Admin System" />
 
           <nav className="sidebar-nav admin-tabs-nav">
             {TABS.map(tab => (
@@ -1451,7 +2498,7 @@ function AdminDashboard() {
           </nav>
 
           <div className="sidebar-card compact">
-            <span className="kicker">Firebase</span>
+            <span className="kicker">Sistema</span>
             <strong>{profile?.nombre || profile?.email || 'Sin sesion'}</strong>
             <small>Reservas sin teacher; Admin forma grupos y asigna profesor.</small>
           </div>
@@ -1467,20 +2514,20 @@ function AdminDashboard() {
               </p>
             </div>
             <div className="header-actions">
+              <Link className="btn btn-primary" to="/show-time" target="_blank" rel="noreferrer">Show time</Link>
               <Link className="btn btn-secondary" to="/student-dashboard">Vista estudiante</Link>
               <Link className="btn btn-secondary" to="/teacher-dashboard">Vista teacher</Link>
               <Link className="btn btn-secondary" to="/login">Cerrar sesion</Link>
             </div>
           </header>
 
-          {message && <p className="system-message">{message}</p>}
           {authError && <p className="system-message">{authError}</p>}
           {loading && <p className="system-message">Cargando datos del instituto...</p>}
 
           {requireLogin && (
             <section className="panel-card admin-card">
               <h2>Necesitas iniciar sesion</h2>
-              <p>Entra con un usuario registrado en Firebase Auth y en la coleccion usuarios.</p>
+              <p>Entra con un usuario autorizado para abrir el panel administrativo.</p>
               <Link className="btn btn-primary" to="/login">Ir al login</Link>
             </section>
           )}
@@ -1498,6 +2545,10 @@ function AdminDashboard() {
               <section className="admin-active-panel">
                 {renderActiveTab()}
               </section>
+              {renderClassModal()}
+              {renderPaymentCaptureModal()}
+              {renderAiPlanModal()}
+              <ActionMessageModal message={message} onClose={() => setMessage('')} />
             </>
           )}
         </main>

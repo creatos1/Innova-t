@@ -6,192 +6,344 @@ export const SCHOLARSHIP_RULES = {
   reviewUnexcusedAbsences: 3
 }
 
-export const ACADEMIC_LEVELS = [
+export const CATALOG_VERSION = 'innova-real-2026-01'
+
+export const FREE_TOPIC_LEVEL_ID = 'tema-libre'
+export const FREE_TOPIC_LESSON_IDS = ['FREE_TALKING_TIME', 'FREE_VOCABULARY', 'FREE_GAMES']
+
+export const CORE_ACADEMIC_LEVELS = [
   {
     id: 'pre-starter',
     order: 0,
-    name: 'Innova Card Pre-Starter',
+    name: 'Pre-Starter',
     shortName: 'Pre-Starter',
     durationMonths: 1,
-    targetLessons: 8,
-    description: 'Induccion, frases esenciales, classroom language y confianza inicial.'
+    targetLessons: 12,
+    description: 'Innova Card inicial: alfabeto, frases base, confianza y supervivencia comunicativa.',
+    catalogVersion: CATALOG_VERSION
   },
   {
-    id: 'level-1',
+    id: 'starter',
     order: 1,
-    name: 'Nivel 1',
-    shortName: 'Nivel 1',
+    name: 'Starter',
+    shortName: 'Starter',
     durationMonths: 1,
-    targetLessons: 8,
-    description: 'Bases de presentacion, presente simple, vocabulario diario y preguntas.'
+    targetLessons: 12,
+    description: 'Identidad, presente, rutinas, casa, articulos y tiempo.',
+    catalogVersion: CATALOG_VERSION
   },
   {
-    id: 'level-2',
+    id: 'beginner',
     order: 2,
-    name: 'Nivel 2',
-    shortName: 'Nivel 2',
-    durationMonths: 1,
-    targetLessons: 8,
-    description: 'Rutinas, pasado simple, frecuencia, conversaciones guiadas y pronunciacion.'
+    name: 'Beginner',
+    shortName: 'Beginner',
+    durationMonths: 3,
+    targetLessons: 20,
+    description: 'Preguntas, habilidades, comparativos, pasado, futuro cercano y conversacion funcional.',
+    catalogVersion: CATALOG_VERSION
   },
   {
-    id: 'level-3',
+    id: 'intermediate',
     order: 3,
-    name: 'Nivel 3',
-    shortName: 'Nivel 3',
+    name: 'Intermediate',
+    shortName: 'Intermediate',
     durationMonths: 3,
-    targetLessons: 18,
-    description: 'Narracion, fluidez, comparativos, situaciones reales y writing funcional.'
+    targetLessons: 16,
+    description: 'Comparativos avanzados, presente perfecto, condicionales, obligaciones y fluidez controlada.',
+    catalogVersion: CATALOG_VERSION
   },
   {
-    id: 'level-4',
+    id: 'advanced',
     order: 4,
-    name: 'Nivel 4',
-    shortName: 'Nivel 4',
+    name: 'Advanced',
+    shortName: 'Advanced',
     durationMonths: 3,
-    targetLessons: 18,
-    description: 'Argumentacion, entrevistas, presentaciones y autonomia conversacional.'
-  },
-  {
-    id: 'level-5',
-    order: 5,
-    name: 'Nivel 5',
-    shortName: 'Nivel 5',
-    durationMonths: 3,
-    targetLessons: 18,
-    description: 'Dominio avanzado, business English, debates y preparacion profesional.'
+    targetLessons: 16,
+    description: 'Conectores avanzados, pasiva, realidades alternativas, causativos y estructuras complejas.',
+    catalogVersion: CATALOG_VERSION
   }
 ]
 
-const lessonNamesByLevel = {
+export const FREE_TOPIC_LEVEL = {
+  id: FREE_TOPIC_LEVEL_ID,
+  order: 99,
+  name: 'Tema Libre',
+  shortName: 'Tema Libre',
+  durationMonths: 0,
+  targetLessons: 3,
+  description: 'Clases flexibles para grupos con niveles muy distintos: talking time, vocabulary y games.',
+  isFreeTopic: true,
+  catalogVersion: CATALOG_VERSION
+}
+
+export const ACADEMIC_LEVELS = [...CORE_ACADEMIC_LEVELS, FREE_TOPIC_LEVEL]
+
+export const LEGACY_ACADEMIC_LEVEL_IDS = ['level-1', 'level-2', 'level-3', 'level-4', 'level-5']
+
+export const LEGACY_LEVEL_ALIASES = {
+  'level-1': 'starter',
+  'level-2': 'beginner',
+  'level-3': 'intermediate',
+  'level-4': 'advanced',
+  'level-5': 'advanced'
+}
+
+const lessonsByLevel = {
   'pre-starter': [
-    'Welcome and learning habits',
-    'Alphabet, spelling and classroom language',
-    'Personal information',
-    'Numbers, dates and schedules',
-    'Basic verbs and daily objects',
-    'Survival questions',
-    'Mini speaking practice',
-    'Pre-Starter checkpoint'
+    'E-Z ABC',
+    'Bye bye Spanish',
+    'D.M.O.Y',
+    'Welcome to the jungle',
+    "What's your favorite food?",
+    'Family tree',
+    'What is your phone number?',
+    "Let's go to...",
+    "What's your favorite hobby?",
+    'Sentence structure',
+    'My little helper',
+    'Do I really speak English?'
   ],
-  'level-1': [
-    'Introductions and verb to be',
-    'Countries, jobs and identities',
-    'Present simple foundations',
-    'Daily routines',
-    'Questions and short answers',
-    'Food, places and preferences',
-    'Speaking lab: daily life',
-    'Nivel 1 checkpoint'
+  starter: [
+    'Who are you?',
+    'This is an easy lesson.',
+    'Counting stars',
+    'Existence',
+    "What's happenING?",
+    'Verbs in past',
+    'Talking about frequency',
+    "My mother's routine",
+    'Welcome to my house',
+    'A good example, an excellent idea',
+    'Tomorrowland.',
+    'Telling the time.'
   ],
-  'level-2': [
-    'Frequency and habits',
-    'Past simple regular verbs',
-    'Past simple irregular verbs',
-    'There was and there were',
-    'Directions and city tasks',
-    'Pronunciation clinic',
-    'Guided conversation practice',
-    'Nivel 2 checkpoint'
+  beginner: [
+    'My stuff',
+    'My abilities',
+    'Wh questions',
+    'What I want',
+    'GPS',
+    'Better or worse',
+    'The best',
+    'My day',
+    'Are you OK?',
+    'My childhood',
+    'Irregular past verbs',
+    'What are you doing tomorrow?',
+    'My weekend',
+    'A solution to your problem.',
+    'Might be',
+    'Are you talking to me?',
+    'Team',
+    "John's car",
+    'What was happening?',
+    'Connecting your world'
   ],
-  'level-3': [
-    'Storytelling warm-up',
-    'Past continuous',
-    'Comparatives and superlatives',
-    'Future plans',
-    'Modal verbs for advice',
-    'Travel situations',
-    'Problem solving conversations',
-    'Email and short writing',
-    'Listening strategy lab',
-    'Speaking fluency circle',
-    'Vocabulary expansion',
-    'Role play: services',
-    'Grammar integration',
-    'Pronunciation and rhythm',
-    'Progress interview',
-    'Workshop reinforcement',
-    'Project presentation',
-    'Nivel 3 checkpoint'
+  intermediate: [
+    'Much better than',
+    'An amazing class',
+    'Unbelievable',
+    'Around the world',
+    'J.A.Y.S',
+    "I've been learning",
+    'I go to (the) school',
+    'Me, myself and I',
+    'My obligations',
+    "You're studying, aren't you?",
+    'If you heat ice...',
+    'If I have time',
+    'If I had',
+    'Study carefully',
+    'I used to...',
+    'Polite questions'
   ],
-  'level-4': [
-    'Opinion building',
-    'Present perfect',
-    'Experience interviews',
-    'Conditionals 0 and 1',
-    'Meetings and teamwork',
-    'Negotiation basics',
-    'Explaining processes',
-    'Academic reading',
-    'Writing paragraphs',
-    'Speaking under pressure',
-    'Listening: native pace',
-    'Debate lab',
-    'Error correction clinic',
-    'Presentation design',
-    'Mock interview',
-    'Workshop reinforcement',
-    'Final project rehearsal',
-    'Nivel 4 checkpoint'
-  ],
-  'level-5': [
-    'Advanced fluency benchmark',
-    'Conditionals 2 and 3',
-    'Reported speech',
-    'Business presentations',
-    'Professional email',
-    'Data and trends',
-    'Leadership vocabulary',
-    'Negotiation scenarios',
-    'Advanced listening',
-    'Pronunciation polish',
-    'Debate and argument',
-    'Culture and idioms',
-    'Client service English',
-    'Interview mastery',
-    'Writing review',
-    'Capstone planning',
-    'Capstone delivery',
-    'Nivel 5 checkpoint'
+  advanced: [
+    'Now and then',
+    'Take a break',
+    'Connecting your world 2',
+    'I want to learn...',
+    'The past family',
+    'Nouning',
+    "It's done",
+    'Time machine',
+    'Alternative realities',
+    'Gossip teachers',
+    'The chain',
+    'When, where, how?',
+    'Getting my car fixed',
+    'Me too, Me neither',
+    'Meet my family',
+    'Not only... but also.'
   ]
 }
 
-export const LESSONS = ACADEMIC_LEVELS.flatMap(level =>
-  lessonNamesByLevel[level.id].map((name, index) => ({
-    id: `${level.id}-lesson-${String(index + 1).padStart(2, '0')}`,
-    levelId: level.id,
-    order: index + 1,
-    name,
-    estimatedHours: 1,
-    activities: [
-      'Warm-up',
-      'Guided practice',
-      'Speaking task',
-      'Teacher feedback'
-    ],
-    objectives: [
-      `Complete ${name.toLowerCase()}`,
-      'Register evidence of progress',
-      'Define next academic action'
-    ]
-  }))
+const levelStartOrder = {
+  'pre-starter': 1,
+  starter: 13,
+  beginner: 25,
+  intermediate: 45,
+  advanced: 61
+}
+
+const coreLessons = CORE_ACADEMIC_LEVELS.flatMap(level =>
+  lessonsByLevel[level.id].map((title, index) => {
+    const globalOrder = levelStartOrder[level.id] + index
+    const code = `L${globalOrder}`
+
+    return {
+      id: code,
+      code,
+      levelId: level.id,
+      order: index + 1,
+      globalOrder,
+      name: `${code} ${title}`,
+      title,
+      estimatedHours: 1,
+      catalogVersion: CATALOG_VERSION,
+      activities: [
+        'Warm-up',
+        'Guided practice',
+        'Speaking task',
+        'Teacher feedback'
+      ],
+      objectives: [
+        `Complete ${code}: ${title}`,
+        'Register evidence of progress',
+        'Define next academic action'
+      ]
+    }
+  })
 )
 
+export const FREE_TOPIC_LESSONS = [
+  {
+    id: FREE_TOPIC_LESSON_IDS[0],
+    code: 'TL1',
+    levelId: FREE_TOPIC_LEVEL_ID,
+    order: 1,
+    globalOrder: 901,
+    name: 'Tema Libre - Talking Time',
+    title: 'Talking Time',
+    estimatedHours: 1,
+    isFreeTopic: true,
+    catalogVersion: CATALOG_VERSION,
+    activities: ['Conversation prompt', 'Guided speaking', 'Teacher feedback'],
+    objectives: ['Practice fluency across mixed levels', 'Maintain active speaking time']
+  },
+  {
+    id: FREE_TOPIC_LESSON_IDS[1],
+    code: 'TL2',
+    levelId: FREE_TOPIC_LEVEL_ID,
+    order: 2,
+    globalOrder: 902,
+    name: 'Tema Libre - Vocabulary',
+    title: 'Vocabulary',
+    estimatedHours: 1,
+    isFreeTopic: true,
+    catalogVersion: CATALOG_VERSION,
+    activities: ['Vocabulary set', 'Context practice', 'Speaking task'],
+    objectives: ['Build practical vocabulary for mixed groups', 'Use new words in conversation']
+  },
+  {
+    id: FREE_TOPIC_LESSON_IDS[2],
+    code: 'TL3',
+    levelId: FREE_TOPIC_LEVEL_ID,
+    order: 3,
+    globalOrder: 903,
+    name: 'Tema Libre - Games',
+    title: 'Games',
+    estimatedHours: 1,
+    isFreeTopic: true,
+    catalogVersion: CATALOG_VERSION,
+    activities: ['Language game', 'Team speaking', 'Teacher correction'],
+    objectives: ['Reinforce English through games', 'Keep mixed-level students engaged']
+  }
+]
+
+export const LESSONS = [...coreLessons, ...FREE_TOPIC_LESSONS]
+
+export function getCanonicalLevelId(levelId) {
+  const cleanLevelId = String(levelId || '').trim()
+  return LEGACY_LEVEL_ALIASES[cleanLevelId] || cleanLevelId
+}
+
+export function isFreeTopicLevelId(levelId) {
+  return getCanonicalLevelId(levelId) === FREE_TOPIC_LEVEL_ID
+}
+
+export function isFreeTopicLesson(lesson) {
+  return lesson?.isFreeTopic === true || isFreeTopicLevelId(lesson?.levelId)
+}
+
+export function isLegacyCatalogLevelId(levelId) {
+  return LEGACY_ACADEMIC_LEVEL_IDS.includes(String(levelId || '').trim())
+}
+
+export function isLegacyLessonId(lessonId) {
+  const cleanLessonId = String(lessonId || '').trim()
+  return /^pre-starter-lesson-\d{2}$/i.test(cleanLessonId)
+    || /^level-[1-5]-lesson-\d{2}$/i.test(cleanLessonId)
+}
+
+export function getCanonicalLessonId(lessonId) {
+  const cleanLessonId = String(lessonId || '').trim()
+  const preStarterMatch = cleanLessonId.match(/^pre-starter-lesson-(\d{2})$/i)
+  if (preStarterMatch) return `L${Math.min(Number(preStarterMatch[1]), 12)}`
+
+  const levelMatch = cleanLessonId.match(/^level-([1-5])-lesson-(\d{2})$/i)
+  if (!levelMatch) return cleanLessonId
+
+  const legacyLevelNumber = Number(levelMatch[1])
+  const legacyLessonNumber = Number(levelMatch[2])
+  const legacyLevelToStart = {
+    1: 13,
+    2: 25,
+    3: 45,
+    4: 61,
+    5: 61
+  }
+  const legacyLevelToCount = {
+    1: 12,
+    2: 20,
+    3: 16,
+    4: 16,
+    5: 16
+  }
+  const startOrder = legacyLevelToStart[legacyLevelNumber] || 1
+  const maxLessons = legacyLevelToCount[legacyLevelNumber] || 12
+  const lessonOffset = Math.min(Math.max(legacyLessonNumber, 1), maxLessons) - 1
+
+  return `L${startOrder + lessonOffset}`
+}
+
 export function getLevel(levelId, levels = []) {
+  const canonicalLevelId = getCanonicalLevelId(levelId)
   return levels.find(level => level.id === levelId)
+    || levels.find(level => level.id === canonicalLevelId)
 }
 
 export function getLessonsByLevel(levelId, lessons = []) {
-  return lessons.filter(lesson => lesson.levelId === levelId).sort((a, b) => a.order - b.order)
+  const canonicalLevelId = getCanonicalLevelId(levelId)
+  return lessons
+    .filter(lesson => lesson.levelId === levelId || lesson.levelId === canonicalLevelId)
+    .sort((a, b) => (a.globalOrder || a.order || 0) - (b.globalOrder || b.order || 0))
 }
 
 export function getLesson(lessonId, lessons = []) {
-  return lessons.find(lesson => lesson.id === lessonId)
+  const cleanLessonId = String(lessonId || '').trim()
+  const canonicalLessonId = getCanonicalLessonId(cleanLessonId)
+  return lessons.find(lesson => lesson.id === cleanLessonId || lesson.code === cleanLessonId.toUpperCase())
+    || lessons.find(lesson => lesson.id === canonicalLessonId || lesson.code === canonicalLessonId)
 }
 
 export function getNextLesson(levelId, currentLessonId, lessons = []) {
   const levelLessons = getLessonsByLevel(levelId, lessons)
-  const currentIndex = levelLessons.findIndex(lesson => lesson.id === currentLessonId)
+  const canonicalLessonId = getCanonicalLessonId(currentLessonId)
+  const currentIndex = levelLessons.findIndex(lesson => (
+    lesson.id === currentLessonId
+    || lesson.id === canonicalLessonId
+    || lesson.code === canonicalLessonId
+  ))
 
   if (currentIndex === -1) return levelLessons[0] || null
   return levelLessons[currentIndex + 1] || null

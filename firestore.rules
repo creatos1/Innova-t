@@ -101,6 +101,17 @@ service cloud.firestore {
         && resource.data.studentIds.size() == request.resource.data.studentIds.size() + 1;
     }
 
+    function isStudentAutoClassDelete() {
+      let studentId = currentStudentId();
+      return studentId != ''
+        && ownsStudent(studentId)
+        && resource.data.reservationSource == 'student-auto'
+        && resource.data.status == 'pendiente_asignacion'
+        && resource.data.teacherId == ''
+        && resource.data.studentIds.size() == 1
+        && resource.data.studentIds.hasAny([studentId]);
+    }
+
     function isBootstrapAdmin(userId) {
       return signedIn()
         && request.auth.uid == userId
@@ -133,7 +144,6 @@ service cloud.firestore {
     function isStudentUidClaim() {
       return signedIn()
         && resource.data.email == request.auth.token.email
-        && (resource.data.uid == null || resource.data.uid == '' || resource.data.uid == request.auth.uid)
         && request.resource.data.diff(resource.data).changedKeys().hasOnly(['uid', 'updatedAt'])
         && request.resource.data.uid == request.auth.uid;
     }
@@ -141,7 +151,6 @@ service cloud.firestore {
     function isTeacherUidClaim() {
       return signedIn()
         && resource.data.email == request.auth.token.email
-        && (resource.data.uid == null || resource.data.uid == '' || resource.data.uid == request.auth.uid)
         && request.resource.data.diff(resource.data).changedKeys().hasOnly(['uid', 'updatedAt'])
         && request.resource.data.uid == request.auth.uid;
     }
@@ -213,6 +222,12 @@ service cloud.firestore {
       allow update: if isAdmin() || isTeacherUidClaim();
     }
 
+    match /classrooms/{classroomId} {
+      allow read: if signedIn();
+      allow create, update: if isStaff();
+      allow delete: if isAdmin();
+    }
+
     match /bloqueos/{blockoutId} {
       allow read: if signedIn();
       allow write: if isAdmin();
@@ -221,7 +236,7 @@ service cloud.firestore {
     match /clases/{classId} {
       allow read: if signedIn();
       allow create: if isAdmin() || isStudentAutoClassCreate();
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || isStudentAutoClassDelete();
       allow update: if isAdmin() || isStudentClassRosterAdd() || isStudentClassRosterRemove();
     }
 
@@ -243,7 +258,7 @@ service cloud.firestore {
 
     match /calificaciones/{gradeId} {
       allow read: if isStaff() || ownsStudent(resource.data.studentId);
-      allow write: if isStaff();
+      allow write: if isAdmin();
     }
 
     match /becaEventos/{eventId} {
@@ -255,6 +270,10 @@ service cloud.firestore {
       allow read: if isStaff() || ownsStudent(resource.data.studentId);
       allow create, update: if isStaff();
       allow delete: if isAdmin();
+    }
+
+    match /authDeletionRequests/{requestId} {
+      allow read, write: if isAdmin();
     }
   }
 }

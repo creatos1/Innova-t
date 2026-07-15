@@ -5,6 +5,7 @@ import {
   createAttendanceRecords,
   createClassRecord,
   createBlockoutRecord,
+  createClassroomRecord,
   createLevelRecord,
   createLessonRecord,
   createPaymentRecord,
@@ -13,6 +14,7 @@ import {
   cancelStudentReservationRecord,
   deleteClassRecord,
   deleteBlockoutRecord,
+  deleteClassroomRecord,
   deleteLevelRecord,
   deleteLessonRecord,
   deletePaymentRecord,
@@ -20,12 +22,14 @@ import {
   deleteTeacherRecord,
   EMPTY_INSTITUTE_DATA,
   initializeAcademicCatalog,
+  initializeClassrooms,
   initializeTeachers,
   registerAbsenceNotice,
   reserveStudentClassRecord,
   subscribeInstituteData,
   updateAttendanceStatus,
   updateClassRecord,
+  updateClassroomRecord,
   updateClassRosterRecord,
   updateLevelRecord,
   updateLessonRecord,
@@ -66,8 +70,8 @@ export function useInstituteData() {
         const permissionDenied = error.code === 'permission-denied'
           || (error.message || '').toLowerCase().includes('insufficient permissions')
         setMessage(permissionDenied
-          ? 'Firebase rechazo permisos. Publica firestore.rules actualizado y confirma que el usuario tenga su rol o studentId vinculado.'
-          : error.message || 'Firebase rechazo una lectura. Revisa reglas y rol del usuario.')
+          ? 'No tienes permisos para ver esta informacion. Revisa que tu usuario tenga el rol correcto.'
+          : error.message || 'No se pudo cargar la informacion. Revisa tu acceso e intenta de nuevo.')
         setLoading(false)
       }
     })
@@ -89,8 +93,8 @@ export function useInstituteData() {
       const permissionDenied = error.code === 'permission-denied'
         || (error.message || '').toLowerCase().includes('insufficient permissions')
       setMessage(permissionDenied
-        ? 'Firebase rechazo permisos al guardar. Publica firestore.rules actualizado y revisa que el alumno tenga studentId vinculado.'
-        : error.message || 'Firebase rechazo la escritura. Revisa permisos y datos.')
+        ? 'No tienes permisos para guardar este cambio.'
+        : error.message || 'No se pudo guardar. Revisa los datos e intenta de nuevo.')
     } finally {
       setSaving(false)
     }
@@ -102,63 +106,63 @@ export function useInstituteData() {
         attended,
         hoursCredited: attended ? 1 : 0
       }),
-      'Asistencia actualizada en Firebase.'
+      'Asistencia actualizada.'
     )
   }
 
   async function notifyAbsence(attendanceId) {
     await runWrite(
       () => registerAbsenceNotice(attendanceId, new Date()),
-      'Aviso de ausencia registrado en Firebase.'
+      'Aviso de ausencia registrado.'
     )
   }
 
   async function createStudent(payload) {
     await runWrite(
       () => createStudentRecord(payload),
-      'Estudiante creado en Firestore.'
+      'Estudiante creado.'
     )
   }
 
   async function updateStudent(studentId, payload) {
     await runWrite(
       () => updateStudentRecord(studentId, payload),
-      'Estudiante actualizado en Firestore.'
+      'Estudiante actualizado.'
     )
   }
 
   async function deleteStudent(studentId, publicId) {
     await runWrite(
       () => deleteStudentRecord(studentId, publicId),
-      'Estudiante eliminado de Firestore.'
+      'Estudiante eliminado.'
     )
   }
 
   async function createClass(payload) {
     await runWrite(
       () => createClassRecord(payload),
-      'Clase creada en Firestore.'
+      'Clase creada.'
     )
   }
 
   async function updateClass(classId, payload) {
     await runWrite(
       () => updateClassRecord(classId, payload),
-      'Clase actualizada en Firestore.'
+      'Clase actualizada.'
     )
   }
 
   async function deleteClass(classId) {
     await runWrite(
       () => deleteClassRecord(classId),
-      'Clase eliminada de Firestore.'
+      'Clase eliminada.'
     )
   }
 
   async function createBlockout(payload) {
     await runWrite(
       () => createBlockoutRecord(payload),
-      'Bloqueo de horario guardado en Firestore.'
+      'Bloqueo de horario guardado.'
     )
   }
 
@@ -166,6 +170,27 @@ export function useInstituteData() {
     await runWrite(
       () => deleteBlockoutRecord(blockoutId),
       'Bloqueo de horario eliminado.'
+    )
+  }
+
+  async function createClassroom(payload) {
+    await runWrite(
+      () => createClassroomRecord(payload),
+      'Classroom guardado.'
+    )
+  }
+
+  async function updateClassroom(classroomId, payload) {
+    await runWrite(
+      () => updateClassroomRecord(classroomId, payload),
+      'Classroom actualizado.'
+    )
+  }
+
+  async function deleteClassroom(classroomId) {
+    await runWrite(
+      () => deleteClassroomRecord(classroomId),
+      'Classroom eliminado.'
     )
   }
 
@@ -186,133 +211,140 @@ export function useInstituteData() {
   async function cancelStudentReservation(classId, studentId) {
     await runWrite(
       () => cancelStudentReservationRecord(classId, studentId),
-      'Reserva cancelada en Firestore.'
+      'Reserva cancelada.'
     )
   }
 
   async function createPayment(payload) {
     await runWrite(
       () => createPaymentRecord(payload),
-      'Pago creado en Firestore.'
+      'Pago creado.'
     )
   }
 
   async function updatePayment(paymentId, payload) {
     await runWrite(
       () => updatePaymentRecord(paymentId, payload),
-      'Pago actualizado en Firestore.'
+      'Pago actualizado.'
     )
   }
 
   async function deletePayment(paymentId) {
     await runWrite(
       () => deletePaymentRecord(paymentId),
-      'Pago eliminado de Firestore.'
+      'Pago eliminado.'
     )
   }
 
   async function createAttendance(payload) {
     await runWrite(
       () => createAttendanceRecord(payload),
-      'Asistencia creada en Firestore.'
+      'Asistencia creada.'
     )
   }
 
   async function createBulkAttendance(records) {
     await runWrite(
       () => createAttendanceRecords(records),
-      'Asistencia guardada por clase en Firestore.'
+      'Asistencia guardada por clase.'
     )
   }
 
   async function createTeacher(payload) {
     await runWrite(
       () => createTeacherRecord(payload),
-      'Teacher guardado en Firestore.'
+      'Teacher guardado.'
     )
   }
 
   async function updateTeacher(teacherId, payload) {
     await runWrite(
       () => updateTeacherRecord(teacherId, payload),
-      'Teacher actualizado en Firestore.'
+      'Teacher actualizado.'
     )
   }
 
   async function deleteTeacher(teacherId, publicId) {
     await runWrite(
       () => deleteTeacherRecord(teacherId, publicId),
-      'Teacher eliminado de Firestore.'
+      'Teacher eliminado.'
     )
   }
 
   async function saveGrade(payload) {
     await runWrite(
       () => upsertGradeRecord(payload),
-      'Calificacion oral/escrita guardada en Firestore.'
+      'Calificacion oral/escrita guardada.'
     )
   }
 
   async function deleteGrade(gradeId) {
     await runWrite(
       () => deleteGradeRecord(gradeId),
-      'Calificacion eliminada de Firestore.'
+      'Calificacion eliminada.'
     )
   }
 
   async function createLevel(payload) {
     await runWrite(
       () => createLevelRecord(payload),
-      'Nivel guardado en Firestore.'
+      'Nivel guardado.'
     )
   }
 
   async function updateLevel(levelId, payload) {
     await runWrite(
       () => updateLevelRecord(levelId, payload),
-      'Nivel actualizado en Firestore.'
+      'Nivel actualizado.'
     )
   }
 
   async function deleteLevel(levelId) {
     await runWrite(
       () => deleteLevelRecord(levelId),
-      'Nivel eliminado de Firestore.'
+      'Nivel eliminado.'
     )
   }
 
   async function createLesson(payload) {
     await runWrite(
       () => createLessonRecord(payload),
-      'Leccion guardada en Firestore.'
+      'Leccion guardada.'
     )
   }
 
   async function updateLesson(lessonId, payload) {
     await runWrite(
       () => updateLessonRecord(lessonId, payload),
-      'Leccion actualizada en Firestore.'
+      'Leccion actualizada.'
     )
   }
 
   async function deleteLesson(lessonId) {
     await runWrite(
       () => deleteLessonRecord(lessonId),
-      'Leccion eliminada de Firestore.'
+      'Leccion eliminada.'
     )
   }
 
   async function seedAcademicCatalog() {
     await runWrite(
       () => initializeAcademicCatalog(),
-      'Catalogo academico inicializado en Firestore.'
+      'Catalogo academico inicializado.'
     )
   }
 
   async function seedTeachers() {
     await runWrite(
       () => initializeTeachers(),
-      'Teachers base inicializados en Firestore.'
+      'Teachers base inicializados.'
+    )
+  }
+
+  async function seedClassrooms() {
+    await runWrite(
+      () => initializeClassrooms(),
+      'Classrooms base inicializados.'
     )
   }
 
@@ -337,6 +369,9 @@ export function useInstituteData() {
     deleteClass,
     createBlockout,
     deleteBlockout,
+    createClassroom,
+    updateClassroom,
+    deleteClassroom,
     updateClassRoster,
     reserveStudentClass,
     cancelStudentReservation,
@@ -357,6 +392,7 @@ export function useInstituteData() {
     updateLesson,
     deleteLesson,
     seedAcademicCatalog,
-    seedTeachers
+    seedTeachers,
+    seedClassrooms
   }
 }

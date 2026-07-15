@@ -30,11 +30,11 @@ export function useAuthProfile() {
             ...profileSnapshot.data()
           })
         } else {
-          setError('Tu usuario existe en Auth, pero falta usuarios/{uid} en Firestore.')
+          setError('Tu acceso existe, pero falta vincularlo a un perfil.')
         }
       } catch (profileError) {
         console.warn(profileError)
-        setError('No se pudo leer tu perfil de usuario en Firestore.')
+        setError('No se pudo leer tu perfil de usuario.')
       } finally {
         setLoading(false)
       }
