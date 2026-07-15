@@ -2515,8 +2515,6 @@ function AdminDashboard() {
             </div>
             <div className="header-actions">
               <Link className="btn btn-primary" to="/show-time" target="_blank" rel="noreferrer">Show time</Link>
-              <Link className="btn btn-secondary" to="/student-dashboard">Vista estudiante</Link>
-              <Link className="btn btn-secondary" to="/teacher-dashboard">Vista teacher</Link>
               <Link className="btn btn-secondary" to="/login">Cerrar sesion</Link>
             </div>
           </header>
