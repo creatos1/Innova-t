@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:vercel": "npx vercel dev --listen 3000",
     "build": "vite build",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
@@ -14,7 +15,11 @@
     "procesar-borrados-auth": "node scripts/process-auth-deletions.js",
     "firebase:login": "npx firebase-tools login",
     "deploy:rules": "npx firebase-tools deploy --only firestore:rules --project innova-t-f16bb",
-    "seed:catalogo": "node scripts/seed-academic-catalog.js"
+    "seed:catalogo": "node scripts/seed-academic-catalog.js",
+    "eliminar-todos-usuarios": "node eliminar-todos-usuarios.js",
+    "reset:clean-admin": "node scripts/reset-clean-admin.js",
+    "bootstrap:admin": "node scripts/bootstrap-client-admin.js",
+    "clean:firestore-admin": "node scripts/clean-firestore-client-admin.js"
   },
   "dependencies": {
     "firebase": "^12.13.0",

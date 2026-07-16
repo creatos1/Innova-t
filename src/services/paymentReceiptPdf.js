@@ -129,7 +129,8 @@ export async function downloadPaymentReceipt({ student, payment }) {
     textLine(`Monto pagado: ${amount}`, 58, 465, 18, 'F2'),
     textLine(`Fecha de emision: ${paidAt}`, 58, 430, 12),
     textLine('Este recibo confirma el registro del pago en el sistema administrativo.', 58, 365, 11),
-    textLine('Gracias por formar parte de Innova-T English Institute.', 58, 340, 11, 'F2'),
+    textLine('Este documento no es un comprobante fiscal y no sirve para facturar.', 58, 340, 10, 'F2'),
+    textLine('Gracias por formar parte de Innova-T English Institute.', 58, 316, 11, 'F2'),
     '0.94 0.89 0.80 rg 48 92 516 1 re f',
     textLine('Contacto: +52 449 312 5789', 58, 70, 10)
   ].join('\n')

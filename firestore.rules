@@ -115,7 +115,10 @@ service cloud.firestore {
     function isBootstrapAdmin(userId) {
       return signedIn()
         && request.auth.uid == userId
-        && request.auth.token.email == 'admin@innova-t.com'
+        && (
+          request.auth.token.email == 'admin@innova-t.com'
+          || request.auth.token.email == 'www.axelelquincle@gmail.com'
+        )
         && request.resource.data.rol == 'admin';
     }
 
@@ -269,6 +272,12 @@ service cloud.firestore {
     match /aiRecommendations/{recommendationId} {
       allow read: if isStaff() || ownsStudent(resource.data.studentId);
       allow create, update: if isStaff();
+      allow delete: if isAdmin();
+    }
+
+    match /aiUsage/{usageId} {
+      allow read: if isStaff();
+      allow create, update: if isAdmin();
       allow delete: if isAdmin();
     }
 

@@ -6,6 +6,7 @@ import BrandLogo from '../components/BrandLogo'
 import StatusBadge from '../components/StatusBadge'
 import { getLesson, getLessonsByLevel, getLevel } from '../domain/academicCatalog'
 import { formatDateTime, toDate } from '../domain/dateUtils'
+import { getClassDateValue, getMexicoDateInput } from '../domain/scheduleMatcher'
 import { useInstituteData } from '../services/useInstituteData'
 
 function sortByName(items = []) {
@@ -62,6 +63,7 @@ function TeacherDashboard() {
   const [newPassword, setNewPassword] = useState('')
   const [passwordMessage, setPasswordMessage] = useState('')
   const navigate = useNavigate()
+  const todayMexico = useMemo(() => getMexicoDateInput(), [])
 
   const requireLogin = !loading && (!user || !profile)
   const teacherId = profile?.teacherId || data.teachers.find(teacher => teacher.name === profile?.nombre)?.id || ''
@@ -69,9 +71,11 @@ function TeacherDashboard() {
   const teacherClasses = useMemo(() => (
     data.classes
       .filter(classItem => classItem.teacherId || classItem.teacherName)
+      .filter(classItem => (classItem.date || getClassDateValue(classItem.startAt)) >= todayMexico)
+      .filter(classItem => (classItem.status || 'programada') !== 'cancelada')
       .filter(classItem => profile?.rol === 'admin' || !teacherId || classItem.teacherId === teacherId || classItem.teacherName === profile?.nombre)
       .sort((a, b) => (toDate(a.startAt)?.getTime() || 0) - (toDate(b.startAt)?.getTime() || 0))
-  ), [data.classes, profile, teacherId])
+  ), [data.classes, profile, teacherId, todayMexico])
   const selectedClass = teacherClasses.find(classItem => classItem.id === selectedClassId) || teacherClasses[0]
   const classStudents = useMemo(() => {
     const ids = new Set(selectedClass?.studentIds || [])
@@ -95,8 +99,10 @@ function TeacherDashboard() {
   }, [loading, navigate, profile])
 
   useEffect(() => {
-    if (!selectedClassId && teacherClasses[0]?.id) {
+    if ((!selectedClassId || !teacherClasses.some(classItem => classItem.id === selectedClassId)) && teacherClasses[0]?.id) {
       setSelectedClassId(teacherClasses[0].id)
+    } else if (selectedClassId && !teacherClasses.length) {
+      setSelectedClassId('')
     }
   }, [selectedClassId, teacherClasses])
 

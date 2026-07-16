@@ -124,6 +124,28 @@ function buildLessonAttemptCounts(student, classes = []) {
   }, initialCounts)
 }
 
+function getCompletedLessonSet(student) {
+  return new Set(Array.isArray(student?.completedLessonIds) ? student.completedLessonIds : [])
+}
+
+function getGroupLessonStats(lessonId, selectedStudents = [], attemptsByStudent = new Map()) {
+  const counts = selectedStudents.map(student => attemptsByStudent.get(student.id)?.[lessonId] || 0)
+  const completedCount = selectedStudents.filter(student => getCompletedLessonSet(student).has(lessonId)).length
+  const maxCount = counts.length ? Math.max(...counts) : 0
+  const totalCount = counts.reduce((sum, count) => sum + count, 0)
+  const unseenCount = counts.filter(count => count === 0).length
+
+  return {
+    completedCount,
+    maxCount,
+    totalCount,
+    unseenCount,
+    allUnseen: maxCount === 0,
+    hasCompletedRepeat: completedCount > 0,
+    hasThirdRepeatRisk: maxCount >= 2
+  }
+}
+
 function uniqueValues(values = []) {
   return Array.from(new Set(values.filter(Boolean)))
 }
@@ -185,13 +207,15 @@ function pickFreeTopicLesson(selectedStudents = [], lessons = [], attemptsByStud
 
   return freeLessons
     .map(lesson => {
-      const counts = selectedStudents.map(student => attemptsByStudent.get(student.id)?.[lesson.id] || 0)
-      const maxCount = counts.length ? Math.max(...counts) : 0
-      const totalCount = counts.reduce((sum, count) => sum + count, 0)
-      return { lesson, maxCount, totalCount }
+      const stats = getGroupLessonStats(lesson.id, selectedStudents, attemptsByStudent)
+      return { lesson, ...stats }
     })
-    .filter(item => item.maxCount < 2)
-    .sort((a, b) => a.maxCount - b.maxCount || a.totalCount - b.totalCount || Number(a.lesson.order || 0) - Number(b.lesson.order || 0))[0]?.lesson
+    .filter(item => !item.hasThirdRepeatRisk)
+    .sort((a, b) => Number(b.allUnseen) - Number(a.allUnseen)
+      || a.completedCount - b.completedCount
+      || a.maxCount - b.maxCount
+      || a.totalCount - b.totalCount
+      || Number(a.lesson.order || 0) - Number(b.lesson.order || 0))[0]?.lesson
     || freeLessons[0]
     || null
 }
@@ -212,6 +236,8 @@ function compactStudent(student, lessons = [], levels = [], classes = []) {
     levelName: level?.shortName || level?.name || '',
     lessonId: student.currentLessonId || '',
     lessonName: lesson?.name || '',
+    completedLessonIds: Array.isArray(student.completedLessonIds) ? student.completedLessonIds : [],
+    avoidLessonIds: Array.isArray(student.completedLessonIds) ? student.completedLessonIds : [],
     lessonAttempts: buildLessonAttemptCounts(student, classes),
     progressPercent: Number(student.progressPercent || 0),
     scholarshipStatus: student.scholarshipStatus || ''
@@ -268,10 +294,12 @@ Reglas reales:
 - Incluye sourceClassIds con todas las reservas pendientes que fusionas en esa clase.
 - Conserva solo studentIds que ya esten en cualquiera de las reservas sourceClassIds.
 - Preferencia: elegir lecciones que el alumno no ha tomado.
-- No repitas la misma leccion que el alumno ya tiene programada/tomada si existe otra leccion viable. Evita clases consecutivas con la misma leccion.
-- En cada alumno, lessonAttempts indica cuantas veces ya tiene tomada o programada una leccion.
+- completedLessonIds / avoidLessonIds son lecciones que el alumno ya tiene marcadas como tomadas en su checklist. Evitalas antes que cualquier otra regla academica.
+- No repitas una leccion tomada por checklist si existe otra leccion viable para el grupo.
+- En cada alumno, lessonAttempts indica cuantas veces ya tiene tomada, marcada o programada una leccion.
 - Si un alumno no ha visto un tema y otro ya lo vio 1 vez, pueden tomarlo juntos.
 - Ningun alumno debe tomar una misma leccion por tercera vez.
+- Prioridad al elegir tema: 1) nadie lo ha tomado, 2) lo ha tomado la menor cantidad de alumnos, 3) menor total de repeticiones, 4) cercania de nivel.
 - Si no hay leccion viable, deja lessonId como "" y agrega warning.
 
 Lecciones disponibles:
@@ -329,40 +357,40 @@ function pickBestLessonForMixedGroup(selectedStudents = [], lessons = [], levels
 
   const scored = candidateLessons
     .map(lesson => {
-      const counts = selectedStudents.map(student => attemptsByStudent.get(student.id)?.[lesson.id] || 0)
-      const maxCount = counts.length ? Math.max(...counts) : 0
-      const totalCount = counts.reduce((sum, count) => sum + count, 0)
-      const unseenCount = counts.filter(count => count === 0).length
-      const onceCount = counts.filter(count => count === 1).length
+      const stats = getGroupLessonStats(lesson.id, selectedStudents, attemptsByStudent)
       const sameLevelCount = selectedStudents.filter(student => getCanonicalLevelId(student.currentLevelId) === lesson.levelId).length
       const currentLessonCount = selectedStudents.filter(student => student.currentLessonId === lesson.id).length
       const lessonLevelOrder = levelOrderById.get(lesson.levelId) || 0
       const averageLevelDistance = selectedStudents.length
         ? selectedStudents.reduce((sum, student) => sum + Math.abs((levelOrderById.get(getCanonicalLevelId(student.currentLevelId)) || lessonLevelOrder) - lessonLevelOrder), 0) / selectedStudents.length
         : 0
-      const allUnseen = maxCount === 0
 
       return {
         lesson,
-        maxCount,
-        totalCount,
-        allUnseen,
-        score: (allUnseen ? 30 : 0)
-          + (currentLessonCount * (allUnseen ? 5 : 1))
+        ...stats,
+        score: (stats.allUnseen ? 1000 : 0)
+          + (stats.completedCount === 0 ? 250 : 0)
+          + (currentLessonCount * (stats.allUnseen ? 8 : 1))
           + (sameLevelCount * 4)
-          + (unseenCount * 3)
-          + onceCount
-          - (totalCount * 12)
+          + (stats.unseenCount * 6)
+          - (stats.completedCount * 200)
+          - (stats.maxCount * 80)
+          - (stats.totalCount * 35)
           - averageLevelDistance
       }
     })
-    .filter(item => item.maxCount < 2)
-    .sort((a, b) => Number(b.allUnseen) - Number(a.allUnseen) || b.score - a.score || a.totalCount - b.totalCount || Number(a.lesson.globalOrder || a.lesson.order || 0) - Number(b.lesson.globalOrder || b.lesson.order || 0))
+    .filter(item => !item.hasThirdRepeatRisk)
+    .sort((a, b) => Number(b.allUnseen) - Number(a.allUnseen)
+      || a.completedCount - b.completedCount
+      || b.score - a.score
+      || a.maxCount - b.maxCount
+      || a.totalCount - b.totalCount
+      || Number(a.lesson.globalOrder || a.lesson.order || 0) - Number(b.lesson.globalOrder || b.lesson.order || 0))
 
   return scored[0]?.lesson || pickFreeTopicLesson(selectedStudents, lessons, attemptsByStudent)
 }
 
-function buildLocalClassFormationSuggestions({ pendingClasses = [], students = [], teachers = [], classes = [], lessons = [], levels = [], classrooms = [], aiLabel = 'IA' }) {
+function buildLocalClassFormationSuggestions({ pendingClasses = [], students = [], teachers = [], classes = [], lessons = [], levels = [], classrooms = [], fallbackReason = '' }) {
   const studentsById = new Map(students.map(student => [student.id, student]))
   const attemptsByStudent = new Map(students.map(student => [student.id, buildLessonAttemptCounts(student, classes)]))
   const activeClassroomLimit = Math.max(1, classrooms.filter(classroom => classroom.active !== false).length || 1)
@@ -405,6 +433,7 @@ function buildLocalClassFormationSuggestions({ pendingClasses = [], students = [
         .map(classItem => classItem.id)
       if (!sourceClassIds.length) return null
       const lesson = pickBestLessonForMixedGroup(selectedStudents, lessons, levels, attemptsByStudent)
+      const lessonStats = lesson ? getGroupLessonStats(lesson.id, selectedStudents, attemptsByStudent) : null
       const level = getLevel(lesson?.levelId, levels)
       const anchorClassId = sourceClassIds[0] || orderedClasses[0]?.id
       const date = getClassDate(orderedClasses[0])
@@ -416,7 +445,7 @@ function buildLocalClassFormationSuggestions({ pendingClasses = [], students = [
         lessonId: lesson?.id || '',
         studentIds: chunk,
         reason: lesson?.id
-          ? `${date} ${time}: grupo mixto de ${chunk.length} alumno(s), ${level?.shortName || 'nivel flexible'}, tema ${lesson.name}; mezcla niveles si conviene y evita tercera repeticion.`
+          ? `${date} ${time}: grupo mixto de ${chunk.length} alumno(s), ${level?.shortName || 'nivel flexible'}, tema ${lesson.name}; ${lessonStats?.allUnseen ? 'nadie lo tiene marcado como tomado' : `${lessonStats?.completedCount || 0} alumno(s) ya lo tomaron, es la opcion con menor repeticion`}; evita tercera repeticion.`
           : `${date} ${time}: no hay tema viable sin tercera repeticion.`,
         confidence: lesson?.id ? Math.max(0.64, 0.84 - (chunkIndex * 0.04)) : 0.35
       }
@@ -426,9 +455,12 @@ function buildLocalClassFormationSuggestions({ pendingClasses = [], students = [
   return {
     provider: MISTRAL_ENABLED || AI_ENABLED ? 'local-rules-fallback' : 'local-rules',
     model: MISTRAL_ENABLED ? MISTRAL_MODEL : AI_ENABLED ? DEFAULT_MODEL : 'sin-ia',
+    sourceType: MISTRAL_ENABLED || AI_ENABLED ? 'fallback' : 'local',
+    sourceLabel: MISTRAL_ENABLED || AI_ENABLED ? 'Deteccion local' : 'Reglas del sistema',
+    fallbackReason,
     summary: MISTRAL_ENABLED || AI_ENABLED
-      ? 'El asistente no respondio; se usaron reglas internas para no detener la operacion.'
-      : `La IA esta desactivada; se agruparon ${pendingClasses.length} reservas por horario en ${suggestions.length} clase(s).`,
+      ? `Propuesta lista para revisar: se agruparon ${pendingClasses.length} reservas por horario en ${suggestions.length} clase(s).`
+      : `Propuesta lista para revisar: se agruparon ${pendingClasses.length} reservas por horario en ${suggestions.length} clase(s).`,
     suggestions,
     warnings: suggestions.some(item => !item.lessonId)
       ? ['Hay grupos sin leccion viable. Revisa historial o separa alumnos manualmente.']
@@ -461,16 +493,19 @@ function normalizeClassPlan(plan, pendingClasses = [], lessons = [], context = {
         const selectedStudents = studentIds.map(studentId => studentsById.get(studentId)).filter(Boolean)
         const suggestedLesson = getLesson(item.lessonId, lessons)
         const groupDistance = getGroupLevelDistance(selectedStudents, context.levels || [])
-        const suggestedCounts = selectedStudents.map(student => attemptsByStudent.get(student.id)?.[suggestedLesson?.id] || 0)
-        const repeatsExistingLesson = suggestedLesson && suggestedCounts.some(count => count > 0)
+        const suggestedStats = suggestedLesson
+          ? getGroupLessonStats(suggestedLesson.id, selectedStudents, attemptsByStudent)
+          : null
+        const repeatsExistingLesson = suggestedStats && (suggestedStats.totalCount > 0 || suggestedStats.completedCount > 0)
+        const thirdRepeatRisk = suggestedStats?.hasThirdRepeatRisk
         const shouldUseFreeTopic = groupDistance >= 2 && !isFreeTopicLesson(suggestedLesson)
         const recommendedLesson = selectedStudents.length
           ? pickBestLessonForMixedGroup(selectedStudents, lessons, context.levels || [], attemptsByStudent)
           : null
-        const shouldRepairLesson = (!suggestedLesson || repeatsExistingLesson || shouldUseFreeTopic) && recommendedLesson?.id
+        const shouldRepairLesson = (!suggestedLesson || repeatsExistingLesson || thirdRepeatRisk || shouldUseFreeTopic) && recommendedLesson?.id
         const lessonId = shouldRepairLesson ? recommendedLesson.id : lessonIds.has(item.lessonId) ? item.lessonId : ''
         const repairReason = shouldRepairLesson && lessonId !== item.lessonId
-          ? ` Ajuste automatico: ${recommendedLesson.name} evita repetir tema o usa Tema Libre para niveles distintos.`
+          ? ` Ajuste automatico: ${recommendedLesson.name} evita tema ya tomado por checklist, repeticion excesiva o usa Tema Libre para niveles distintos.`
           : ''
         return {
           classId: item.classId,
@@ -542,7 +577,7 @@ export async function generateStudentAiRecommendation(student, scholarshipEvalua
       aiSummary: {
         nextLessonId: localRecommendation.nextLesson?.id || null,
         atrasoDetectado: localRecommendation.isBehind,
-        motivoAtraso: 'El asistente no respondio; se uso la evaluacion local.',
+        motivoAtraso: 'Se uso la evaluacion academica disponible del sistema.',
         refuerzos: localRecommendation.reinforcementTopics,
         grupoSugerido: `${localRecommendation.levelName} - ritmo ${localRecommendation.pace}`,
         accionRecomendada: localRecommendation.action,
@@ -611,19 +646,29 @@ async function requestMistralClassPlan(prompt) {
 
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}))
-    throw new Error(payload.error || `El asistente respondio ${response.status}.`)
+    if (response.status === 404) {
+      const origin = typeof window !== 'undefined' ? window.location.origin : ''
+      const isViteDirect = origin.includes(':5173')
+      throw new Error(isViteDirect
+        ? 'Abriste el panel en Vite directo (5173). Para usar IA local abre la URL de Vercel Dev, normalmente http://localhost:3000.'
+        : 'No se encontro el asistente en el servidor. Revisa que el despliegue de Vercel incluya la carpeta api y que hayas hecho redeploy.')
+    }
+    throw new Error(payload.error || `El asistente no pudo responder (${response.status}).`)
   }
 
   return response.json()
 }
 
 export async function generateClassFormationSuggestions({ pendingClasses = [], students = [], teachers = [], classes = [], lessons = [], levels = [], classrooms = [], targetSlot = null }) {
-  const localPlan = (aiLabel = 'IA') => buildLocalClassFormationSuggestions({ pendingClasses, students, teachers, classes, lessons, levels, classrooms, aiLabel })
+  const localPlan = (fallbackReason = '') => buildLocalClassFormationSuggestions({ pendingClasses, students, teachers, classes, lessons, levels, classrooms, fallbackReason })
 
   if (!pendingClasses.length) {
     return {
       provider: 'local-rules',
       model: 'sin-reservas',
+      sourceType: 'local',
+      sourceLabel: 'Reglas del sistema',
+      fallbackReason: '',
       summary: 'No hay reservas pendientes por formar.',
       suggestions: [],
       warnings: []
@@ -653,15 +698,18 @@ export async function generateClassFormationSuggestions({ pendingClasses = [], s
       return {
         provider: 'mistral-ai',
         model: rawPlan.__model || MISTRAL_MODEL,
+        sourceType: 'ai',
+        sourceLabel: 'Resultado de IA',
+        fallbackReason: '',
         ...parsed
       }
     } catch (error) {
       console.warn('Class formation assistant failed; falling back to local rules.', error)
-      return localPlan('IA')
+      return localPlan(error.message || 'El asistente no respondio.')
     }
   }
 
-  if (!AI_ENABLED) return localPlan('IA')
+  if (!AI_ENABLED) return localPlan('')
 
   try {
     const { getAI, getGenerativeModel, GoogleAIBackend } = await import('firebase/ai')
@@ -690,10 +738,13 @@ export async function generateClassFormationSuggestions({ pendingClasses = [], s
     return {
       provider: 'firebase-ai-logic',
       model: DEFAULT_MODEL,
+      sourceType: 'ai',
+      sourceLabel: 'Resultado de IA',
+      fallbackReason: '',
       ...parsed
     }
   } catch (error) {
     console.warn('Backup class formation assistant failed; falling back to local rules.', error)
-    return localPlan('IA')
+    return localPlan(error.message || 'El asistente no respondio.')
   }
 }

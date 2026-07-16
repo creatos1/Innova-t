@@ -11,6 +11,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  increment,
   updateDoc,
   where,
   writeBatch
@@ -38,6 +39,7 @@ const COLLECTIONS = {
   alerts: 'becaEventos',
   blockouts: 'bloqueos',
   aiRecommendations: 'aiRecommendations',
+  aiUsage: 'aiUsage',
   authDeletionRequests: 'authDeletionRequests'
 }
 
@@ -53,7 +55,8 @@ export const EMPTY_INSTITUTE_DATA = {
   payments: [],
   grades: [],
   alerts: [],
-  blockouts: []
+  blockouts: [],
+  aiUsage: []
 }
 
 export const DEFAULT_TEACHERS = [
@@ -179,6 +182,7 @@ export function subscribeInstituteData({ profile, onData, onError }) {
     attach('payments', collection(db, COLLECTIONS.payments))
     attach('grades', collection(db, COLLECTIONS.grades))
     attach('alerts', collection(db, COLLECTIONS.alerts))
+    attach('aiUsage', collection(db, COLLECTIONS.aiUsage))
   } else {
     const studentId = getStudentId(profile)
 
@@ -967,6 +971,31 @@ export async function saveAiRecommendation(recommendation) {
     updatedAt: serverTimestamp()
   })
   return id
+}
+
+export async function recordAiUsageEvent(payload = {}) {
+  const month = payload.month || new Date().toISOString().slice(0, 7)
+  const provider = payload.provider || 'local-rules'
+  const status = payload.status || 'local'
+  const isAiResponse = provider === 'mistral-ai' || provider === 'firebase-ai-logic'
+  const isFallback = provider === 'local-rules-fallback'
+  const isManual = provider === 'admin-manual'
+
+  await setDoc(doc(db, COLLECTIONS.aiUsage, month), {
+    id: month,
+    month,
+    totalRequests: increment(1),
+    aiResponses: increment(isAiResponse ? 1 : 0),
+    localDetections: increment(provider === 'local-rules' ? 1 : 0),
+    fallbacks: increment(isFallback ? 1 : 0),
+    manualFormations: increment(isManual ? 1 : 0),
+    errors: increment(payload.error ? 1 : 0),
+    lastProvider: provider,
+    lastModel: payload.model || '',
+    lastStatus: status,
+    lastMessage: payload.message || '',
+    updatedAt: serverTimestamp()
+  }, { merge: true })
 }
 
 export { COLLECTIONS, isStaff, getStudentId }

@@ -17,6 +17,7 @@ import {
   isSlotBlocked
 } from '../domain/scheduleMatcher'
 import { generateClassFormationSuggestions } from '../services/aiAdvisor'
+import { recordAiUsageEvent } from '../services/instituteRepository'
 import { useInstituteData } from '../services/useInstituteData'
 
 const TABS = [
@@ -25,12 +26,14 @@ const TABS = [
   { id: 'payments', label: 'PAGOS' },
   { id: 'classes', label: 'CLASES' },
   { id: 'attendance', label: 'ASISTENCIAS' },
+  { id: 'ai-usage', label: 'USO DE IA' },
   { id: 'catalog', label: 'LECCIONES' }
 ]
 
 const DEFAULT_STUDENT_LEVEL_ID = 'pre-starter'
 const DEFAULT_STUDENT_LESSON_ID = 'L1'
 const PAYMENT_MONTH_COLUMNS = 12
+const MISTRAL_MONTHLY_LIMIT = Math.max(1, Number(import.meta.env.VITE_MISTRAL_MONTHLY_LIMIT || 1000))
 
 function buildDateInput(year, monthIndex, day) {
   const lastDay = new Date(year, monthIndex + 1, 0).getDate()
@@ -303,6 +306,46 @@ function getHourWord(hours) {
   return Number(hours) === 1 ? 'hora' : 'horas'
 }
 
+function getCurrentMonthId() {
+  return getMexicoDateInput().slice(0, 7)
+}
+
+function getPlanSourceMeta(plan) {
+  const provider = plan?.provider || 'local-rules'
+
+  if (provider === 'mistral-ai' || provider === 'firebase-ai-logic') {
+    return {
+      severity: 'ok',
+      label: 'Resultado de IA',
+      detail: plan?.model ? `La propuesta fue generada por el asistente academico (${plan.model}).` : 'La propuesta fue generada por el asistente academico.'
+    }
+  }
+
+  if (provider === 'admin-manual') {
+    return {
+      severity: 'info',
+      label: 'Manual',
+      detail: 'El admin esta formando la clase directamente.'
+    }
+  }
+
+  if (provider === 'local-rules-fallback') {
+    return {
+      severity: 'warning',
+      label: 'Deteccion local',
+      detail: plan?.fallbackReason
+        ? `El asistente no respondio. Se uso acomodo automatico del sistema: ${plan.fallbackReason}`
+        : 'El asistente no respondio. Se uso acomodo automatico del sistema.'
+    }
+  }
+
+  return {
+    severity: 'info',
+    label: 'Reglas del sistema',
+    detail: 'La propuesta fue calculada con las reglas academicas guardadas en el sistema.'
+  }
+}
+
 function emptyStudentForm(today) {
   return {
     publicId: '',
@@ -429,6 +472,10 @@ function AdminDashboard() {
     attendance: { search: '', order: 'name-asc' },
     catalog: { search: '', order: 'level-asc' }
   })
+  const [reservationFilters, setReservationFilters] = useState({
+    date: '',
+    time: ''
+  })
   const [levelForm, setLevelForm] = useState({
     id: '',
     order: 0,
@@ -486,12 +533,41 @@ function AdminDashboard() {
       )
     ))
   ), [classesByRecentDate])
+  const reservationFilterDates = useMemo(() => (
+    Array.from(new Set(pendingAssignmentClasses.map(classItem => classItem.date || getClassDateValue(classItem.startAt)).filter(Boolean))).sort()
+  ), [pendingAssignmentClasses])
+  const reservationFilterTimes = useMemo(() => (
+    Array.from(new Set(pendingAssignmentClasses
+      .filter(classItem => !reservationFilters.date || (classItem.date || getClassDateValue(classItem.startAt)) === reservationFilters.date)
+      .map(classItem => classItem.time || getClassTimeValue(classItem.startAt))
+      .filter(Boolean))).sort()
+  ), [pendingAssignmentClasses, reservationFilters.date])
+  const filteredPendingAssignmentClasses = useMemo(() => (
+    pendingAssignmentClasses.filter(classItem => {
+      const date = classItem.date || getClassDateValue(classItem.startAt)
+      const time = classItem.time || getClassTimeValue(classItem.startAt)
+
+      return (!reservationFilters.date || date === reservationFilters.date)
+        && (!reservationFilters.time || time === reservationFilters.time)
+    })
+  ), [pendingAssignmentClasses, reservationFilters])
+  const oldPendingAssignmentClasses = useMemo(() => (
+    pendingAssignmentClasses.filter(classItem => {
+      const date = classItem.date || getClassDateValue(classItem.startAt)
+      return date && date < todayMexico
+    })
+  ), [pendingAssignmentClasses, todayMexico])
+  const currentAiUsage = useMemo(() => (
+    data.aiUsage.find(item => item.id === getCurrentMonthId() || item.month === getCurrentMonthId()) || {}
+  ), [data.aiUsage])
+  const aiUsageTotal = Number(currentAiUsage.totalRequests || 0)
+  const aiUsagePercent = Math.min(100, Math.round((aiUsageTotal / MISTRAL_MONTHLY_LIMIT) * 100))
   const pendingAssignmentSlotGroups = useMemo(() => (
-    buildPendingSlotGroups(pendingAssignmentClasses, sortedStudents)
-  ), [pendingAssignmentClasses, sortedStudents])
+    buildPendingSlotGroups(filteredPendingAssignmentClasses, sortedStudents)
+  ), [filteredPendingAssignmentClasses, sortedStudents])
   const reservationStudentRows = useMemo(() => (
-    buildReservationStudentRows(pendingAssignmentClasses, sortedStudents)
-  ), [pendingAssignmentClasses, sortedStudents])
+    buildReservationStudentRows(filteredPendingAssignmentClasses, sortedStudents)
+  ), [filteredPendingAssignmentClasses, sortedStudents])
   const selectedAttendanceClass = useMemo(() => (
     classesByRecentDate.find(classItem => classItem.id === selectedAttendanceClassId)
   ), [classesByRecentDate, selectedAttendanceClassId])
@@ -766,6 +842,11 @@ function AdminDashboard() {
   }, [classForm.time, classTimeOptions])
 
   useEffect(() => {
+    if (!reservationFilters.time || reservationFilterTimes.includes(reservationFilters.time)) return
+    setReservationFilters(prev => ({ ...prev, time: '' }))
+  }, [reservationFilterTimes, reservationFilters.time])
+
+  useEffect(() => {
     if (!studentForm.currentLevelId || studentForm.currentLessonId || !studentFormLessons[0]?.id) return
     setStudentForm(prev => ({ ...prev, currentLessonId: studentFormLessons[0].id }))
   }, [studentForm.currentLessonId, studentForm.currentLevelId, studentFormLessons])
@@ -909,13 +990,56 @@ function AdminDashboard() {
   const setAiDraftClassCount = (nextCount) => {
     const count = Math.max(1, Math.min(Number(nextCount) || 1, getAiPlanMaxClasses(aiPlanGroup)))
     setAiPlanClassCount(count)
-    setAiPlanDrafts(prev => buildAiPlanDrafts(aiPlanGroup, aiClassPlan?.suggestions || [], count, prev))
+    setAiPlanDrafts(prev => enforceExclusiveAiDraftAssignments(buildAiPlanDrafts(aiPlanGroup, aiClassPlan?.suggestions || [], count, prev)))
+  }
+
+  const enforceExclusiveAiDraftAssignments = (drafts = [], slotGroup = aiPlanGroup) => {
+    const usedStudents = new Set()
+    const usedTeachers = new Set()
+    const usedClassrooms = new Set()
+
+    return drafts.map(draft => {
+      const studentIds = []
+      ;(draft.studentIds || []).forEach(studentId => {
+        if (usedStudents.has(studentId)) return
+        usedStudents.add(studentId)
+        studentIds.push(studentId)
+      })
+
+      const teacherId = draft.teacherId && !usedTeachers.has(draft.teacherId)
+        ? draft.teacherId
+        : ''
+      if (teacherId) usedTeachers.add(teacherId)
+
+      const classroomId = draft.classroomId && !usedClassrooms.has(draft.classroomId)
+        ? draft.classroomId
+        : ''
+      if (classroomId) usedClassrooms.add(classroomId)
+
+      return {
+        ...draft,
+        teacherId,
+        classroomId,
+        studentIds,
+        sourceClassIds: getSourceClassIdsForStudentIds(slotGroup, studentIds)
+      }
+    })
   }
 
   const updateAiPlanDraft = (draftId, patch) => {
-    setAiPlanDrafts(prev => prev.map(draft => (
-      draft.id === draftId ? { ...draft, ...patch } : draft
-    )))
+    setAiPlanDrafts(prev => prev.map(draft => {
+      if (draft.id === draftId) return { ...draft, ...patch }
+
+      if (patch.teacherId && draft.teacherId === patch.teacherId) {
+        return { ...draft, teacherId: '' }
+      }
+
+      if (patch.classroomId && draft.classroomId === patch.classroomId) {
+        return { ...draft, classroomId: '' }
+      }
+
+      return draft
+    }))
   }
 
   const toggleAiPlanDraftStudent = (draftId, studentId, checked) => {
@@ -1070,6 +1194,14 @@ function AdminDashboard() {
       return
     }
 
+    const duplicatedTeachers = drafts
+      .map(draft => draft.teacherId)
+      .filter((teacherId, index, list) => teacherId && list.indexOf(teacherId) !== index)
+    if (duplicatedTeachers.length) {
+      setMessage('No repitas teacher en clases del mismo horario.')
+      return
+    }
+
     const duplicatedClassrooms = drafts
       .map(draft => draft.classroomId)
       .filter((classroomId, index, list) => classroomId && list.indexOf(classroomId) !== index)
@@ -1204,6 +1336,17 @@ function AdminDashboard() {
         groupId: slotGroup.id,
         groupLabel: `${formatDateTime(slotGroup.startAt)} - ${slotGroup.studentIds.length}/8 estudiantes`
       }
+      try {
+        await recordAiUsageEvent({
+          month: getCurrentMonthId(),
+          provider: plan.provider,
+          model: plan.model || '',
+          status: plan.sourceType || plan.provider,
+          message: plan.fallbackReason || plan.summary || ''
+        })
+      } catch (usageError) {
+        console.warn('No se pudo registrar el uso de IA.', usageError)
+      }
       const initialClassCount = Math.max(1, Math.min(
         getAiPlanMaxClasses(slotGroup),
         plan.suggestions?.length || 1
@@ -1212,12 +1355,10 @@ function AdminDashboard() {
       setAiClassPlan(nextPlan)
       setAiPlanGroup(slotGroup)
       setAiPlanClassCount(initialClassCount)
-      setAiPlanDrafts(buildAiPlanDrafts(slotGroup, plan.suggestions || [], initialClassCount))
+      setAiPlanDrafts(enforceExclusiveAiDraftAssignments(buildAiPlanDrafts(slotGroup, plan.suggestions || [], initialClassCount), slotGroup))
       setAiPlanCloseConfirm(false)
       setIsAiPlanModalOpen(true)
-      setMessage(plan.provider === 'mistral-ai'
-        ? `La IA sugirio ${plan.suggestions.length} acomodo(s) para ${formatDateTime(slotGroup.startAt)}.`
-        : `Se genero acomodo local: ${plan.summary}`)
+      setMessage('')
     } catch (error) {
       setMessage(error.message || 'No se pudo generar la sugerencia.')
     } finally {
@@ -1226,17 +1367,37 @@ function AdminDashboard() {
   }
 
   const applySlotGroup = (slotGroup) => {
-    const classItem = data.classes.find(item => item.id === slotGroup.sourceClassIds[0])
-    if (!classItem) return
+    const plan = {
+      provider: 'admin-manual',
+      model: '',
+      summary: 'Forma la clase manualmente: elige tema, teacher, classroom y alumnos.',
+      suggestions: [],
+      warnings: []
+    }
+    const classCount = 1
 
-    editClass(classItem, {
-      lessonId: classItem.lessonIds?.[0] || '',
-      teacherId: '',
-      status: 'pendiente_asignacion',
-      sourceClassIds: slotGroup.sourceClassIds,
-      studentIds: slotGroup.studentIds
-    })
-    setMessage('Grupo por horario cargado. Elige leccion, asigna teacher, classroom y guarda una sola clase.')
+    setAiClassPlan(plan)
+    setAiPlanGroup(slotGroup)
+    setAiPlanClassCount(classCount)
+    setAiPlanDrafts(enforceExclusiveAiDraftAssignments(buildAiPlanDrafts(slotGroup, [], classCount), slotGroup))
+    setAiPlanCloseConfirm(false)
+    setIsAiPlanModalOpen(true)
+  }
+
+  const deleteOldPendingReservations = async () => {
+    if (!oldPendingAssignmentClasses.length) {
+      setMessage('No hay reservas anteriores por eliminar.')
+      return
+    }
+
+    const confirmed = window.confirm(`Se eliminaran ${oldPendingAssignmentClasses.length} reserva(s) pendiente(s) de dias anteriores. Esta accion no se puede deshacer.`)
+    if (!confirmed) return
+
+    for (const classItem of oldPendingAssignmentClasses) {
+      await deleteClass(classItem.id)
+    }
+
+    setMessage(`${oldPendingAssignmentClasses.length} reserva(s) anterior(es) eliminada(s).`)
   }
 
   const submitAttendance = async (event) => {
@@ -1987,18 +2148,20 @@ function AdminDashboard() {
     const groupStudents = aiPlanGroup.students?.length
       ? aiPlanGroup.students
       : aiPlanGroup.studentIds.map(studentId => sortedStudents.find(student => student.id === studentId)).filter(Boolean)
+    const isManualFormation = aiClassPlan?.provider === 'admin-manual'
+    const sourceMeta = getPlanSourceMeta(aiClassPlan)
 
     return (
       <div className="modal-backdrop" role="presentation">
         <section className="modal-card panel-card admin-card ai-plan-modal" role="dialog" aria-modal="true" aria-labelledby="ai-plan-modal-title">
           <div className="admin-section-title">
             <div>
-              <h2 id="ai-plan-modal-title">Propuesta IA para formar clases</h2>
+              <h2 id="ai-plan-modal-title">{isManualFormation ? 'Formar clase' : 'Propuesta IA para formar clases'}</h2>
               <p>{formatDateTime(aiPlanGroup.startAt)}. Puedes formar hasta {maxClasses} {maxClasses === 1 ? 'clase' : 'clases'} por los classrooms activos.</p>
             </div>
             <div className="row-actions">
-              <StatusBadge severity={aiClassPlan?.provider === 'mistral-ai' || aiClassPlan?.provider === 'firebase-ai-logic' ? 'ok' : 'warning'}>
-                Asistente academico
+              <StatusBadge severity={sourceMeta.severity}>
+                {sourceMeta.label}
               </StatusBadge>
               <button className="btn btn-secondary small-btn" type="button" onClick={requestCloseAiPlanModal}>
                 {aiPlanCloseConfirm ? 'Cerrar de todos modos' : 'Cerrar'}
@@ -2017,6 +2180,7 @@ function AdminDashboard() {
               <div>
                 <h3>Resumen</h3>
                 <p>{aiClassPlan?.summary || 'Ajusta la propuesta antes de guardar.'}</p>
+                <p className="ai-source-note">{sourceMeta.detail}</p>
               </div>
               <label className="form-field compact-select">
                 <span>Clases a formar</span>
@@ -2125,8 +2289,36 @@ function AdminDashboard() {
             <p>IA propone grupos y tema; Admin asigna teacher y classroom.</p>
           </div>
           <div className="row-actions">
-            <StatusBadge severity={pendingAssignmentSlotGroups.length ? 'warning' : 'ok'}>{pendingAssignmentSlotGroups.length} bloques / {pendingAssignmentClasses.length} reservas</StatusBadge>
+            <StatusBadge severity={pendingAssignmentSlotGroups.length ? 'warning' : 'ok'}>{pendingAssignmentSlotGroups.length} bloques / {filteredPendingAssignmentClasses.length} de {pendingAssignmentClasses.length} reservas</StatusBadge>
           </div>
+        </div>
+        <div className="table-tools reservation-tools">
+          <input
+            className="table-input"
+            type="date"
+            value={reservationFilters.date}
+            onChange={event => setReservationFilters(prev => ({ ...prev, date: event.target.value }))}
+            list="reservation-filter-dates"
+            aria-label="Filtrar reservas por dia"
+          />
+          <datalist id="reservation-filter-dates">
+            {reservationFilterDates.map(date => <option value={date} key={date}>{formatDateInputLabel(date)}</option>)}
+          </datalist>
+          <select
+            className="table-input"
+            value={reservationFilters.time}
+            onChange={event => setReservationFilters(prev => ({ ...prev, time: event.target.value }))}
+            aria-label="Filtrar reservas por hora"
+          >
+            <option value="">Todas las horas</option>
+            {reservationFilterTimes.map(time => <option value={time} key={time}>{formatTimeLabel(time)}</option>)}
+          </select>
+          <button className="btn btn-secondary small-btn" type="button" onClick={() => setReservationFilters({ date: '', time: '' })}>
+            Limpiar filtros
+          </button>
+          <button className="btn btn-secondary small-btn danger-btn" type="button" onClick={deleteOldPendingReservations} disabled={saving || !oldPendingAssignmentClasses.length || !isAdmin}>
+            Eliminar anteriores ({oldPendingAssignmentClasses.length})
+          </button>
         </div>
         <div className="stack-list">
           {pendingAssignmentSlotGroups.map(group => {
@@ -2170,6 +2362,8 @@ function AdminDashboard() {
               <tr>
                 <th>ID</th>
                 <th>Nombre</th>
+                <th>Dia</th>
+                <th>Hora</th>
                 <th>Horas reservadas</th>
               </tr>
             </thead>
@@ -2178,12 +2372,14 @@ function AdminDashboard() {
                 <tr key={`${row.studentId}-${row.date}-${row.time}`}>
                   <td>{row.publicId}</td>
                   <td>{row.fullName}</td>
+                  <td>{formatDateInputLabel(row.date)}</td>
+                  <td>{formatTimeLabel(row.time)}</td>
                   <td>{row.hours} {getHourWord(row.hours)}</td>
                 </tr>
               ))}
               {!reservationStudentRows.length && (
                 <tr>
-                  <td colSpan="3">No hay reservas pendientes por estudiante.</td>
+                  <td colSpan="5">No hay reservas pendientes por estudiante.</td>
                 </tr>
               )}
             </tbody>
@@ -2307,6 +2503,76 @@ function AdminDashboard() {
           ))}
           {!sortedBlockouts.length && <p className="empty-state">No hay horarios bloqueados.</p>}
         </div>
+      </article>
+    </section>
+  )
+
+  const renderAiUsageTab = () => (
+    <section className="admin-tab-grid">
+      <article className="panel-card admin-card ai-usage-card">
+        <div className="admin-section-title">
+          <div>
+            <h2>Uso de IA</h2>
+            <p>Conteo mensual de sugerencias generadas desde este sistema.</p>
+          </div>
+          <StatusBadge severity={aiUsagePercent >= 90 ? 'risk' : aiUsagePercent >= 70 ? 'warning' : 'ok'}>
+            {aiUsageTotal}/{MISTRAL_MONTHLY_LIMIT}
+          </StatusBadge>
+        </div>
+        <div className="ai-usage-meter" aria-label="Uso mensual de IA">
+          <div className="ai-usage-meter-fill" style={{ width: `${aiUsagePercent}%` }} />
+        </div>
+        <dl className="compact-facts four-columns ai-usage-facts">
+          <div>
+            <dt>Mes</dt>
+            <dd>{currentAiUsage.month || getCurrentMonthId()}</dd>
+          </div>
+          <div>
+            <dt>IA respondio</dt>
+            <dd>{Number(currentAiUsage.aiResponses || 0)}</dd>
+          </div>
+          <div>
+            <dt>Deteccion local</dt>
+            <dd>{Number(currentAiUsage.fallbacks || 0) + Number(currentAiUsage.localDetections || 0)}</dd>
+          </div>
+          <div>
+            <dt>Ultimo origen</dt>
+            <dd>{getPlanSourceMeta({ provider: currentAiUsage.lastProvider || 'local-rules', model: currentAiUsage.lastModel || '' }).label}</dd>
+          </div>
+        </dl>
+        <p className="ai-source-note">
+          Si el asistente no responde, el sistema sigue trabajando con reglas academicas y lo marca como deteccion local.
+        </p>
+      </article>
+
+      <article className="panel-card admin-card">
+        <div className="admin-section-title">
+          <div>
+            <h2>Ultima actividad</h2>
+            <p>Diagnostico simple para saber si la sugerencia vino del asistente o del acomodo local.</p>
+          </div>
+        </div>
+        <dl className="compact-facts two-columns">
+          <div>
+            <dt>Origen</dt>
+            <dd>{getPlanSourceMeta({ provider: currentAiUsage.lastProvider || 'local-rules', model: currentAiUsage.lastModel || '' }).label}</dd>
+          </div>
+          <div>
+            <dt>Modelo</dt>
+            <dd>{currentAiUsage.lastModel || 'No registrado'}</dd>
+          </div>
+          <div>
+            <dt>Estado</dt>
+            <dd>{currentAiUsage.lastStatus || 'Sin actividad'}</dd>
+          </div>
+          <div>
+            <dt>Fallos del mes</dt>
+            <dd>{Number(currentAiUsage.errors || 0)}</dd>
+          </div>
+        </dl>
+        {currentAiUsage.lastMessage && (
+          <p className="system-message section-gap">{currentAiUsage.lastMessage}</p>
+        )}
       </article>
     </section>
   )
@@ -2480,6 +2746,7 @@ function AdminDashboard() {
     if (activeTab === 'payments') return renderPaymentsTab()
     if (activeTab === 'classes') return renderClassesTab()
     if (activeTab === 'attendance') return renderAttendanceTab()
+    if (activeTab === 'ai-usage') return renderAiUsageTab()
     return renderCatalogTab()
   }
 

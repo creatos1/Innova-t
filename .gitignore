@@ -12,3 +12,6 @@ serviceAccountKey.json
 
 # Vercel local state
 .vercel/
+
+.vercel
+.env*
