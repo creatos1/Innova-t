@@ -290,6 +290,9 @@ Reglas reales:
 - Si un alumno debe repetir una leccion para que el grupo funcione, se permite; tercera vez ya no.
 - Maximo 8 alumnos por clase.
 - No inventes IDs.
+- No escribas warnings sobre alumnos que no aparecen en Reservas pendientes.
+- Si todos los alumnos de la ventana quedan asignados, warnings debe ser [].
+- No propongas clases vacias ni warnings de "clase vacia".
 - Usa classId como la reserva ancla que se editara.
 - Incluye sourceClassIds con todas las reservas pendientes que fusionas en esa clase.
 - Conserva solo studentIds que ya esten en cualquiera de las reservas sourceClassIds.
@@ -472,15 +475,32 @@ function normalizeClassPlan(plan, pendingClasses = [], lessons = [], context = {
   const pendingIds = new Set(pendingClasses.map(classItem => classItem.id))
   const lessonIds = new Set(lessons.map(lesson => lesson.id))
   const pendingById = new Map(pendingClasses.map(classItem => [classItem.id, classItem]))
+  const allowedStudentIds = new Set(pendingClasses.flatMap(classItem => classItem.studentIds || []))
   const studentsById = new Map((context.students || []).map(student => [student.id, student]))
+  const allowedStudentPublicIds = new Set(
+    Array.from(allowedStudentIds)
+      .map(studentId => studentsById.get(studentId)?.publicId)
+      .filter(Boolean)
+  )
   const attemptsByStudent = new Map((context.students || []).map(student => [
     student.id,
     buildLessonAttemptCounts(student, context.classes || [])
   ]))
+  const cleanWarnings = (Array.isArray(plan.warnings) ? plan.warnings : [])
+    .map(warning => String(warning || '').trim())
+    .filter(Boolean)
+    .filter(warning => {
+      const lower = warning.toLowerCase()
+      if (lower.includes('clase vacia') || lower.includes('clase vacía')) return false
+      if (lower.includes('no esta incluido') || lower.includes('no está incluido')) return false
+      if (lower.includes('no tiene reserva')) return false
+      const idMatches = warning.match(/\b(?:\d{3,5}|T-\d{3}|EST-\d{3})\b/gi) || []
+      return idMatches.every(id => allowedStudentIds.has(id) || allowedStudentPublicIds.has(id.toUpperCase()))
+    })
 
   return {
     summary: plan.summary || 'La IA genero una propuesta de acomodo.',
-    warnings: Array.isArray(plan.warnings) ? plan.warnings : [],
+    warnings: cleanWarnings,
     suggestions: (Array.isArray(plan.suggestions) ? plan.suggestions : [])
       .filter(item => pendingIds.has(item.classId))
       .map(item => {

@@ -268,6 +268,18 @@ function splitStudentIdsByLevelProximity(studentIds = [], students = [], levels 
   }).filter(chunk => chunk.length)
 }
 
+function getRecommendedClassCountForStudents(studentIds = [], students = [], levels = [], classroomLimit = 1) {
+  const cleanStudentIds = uniqueValues(studentIds)
+  if (cleanStudentIds.length <= 1) return cleanStudentIds.length
+  if (cleanStudentIds.length <= 8) {
+    const distance = getStudentGroupLevelDistance(cleanStudentIds, students, levels)
+    if (distance <= 1) return 1
+    return Math.min(classroomLimit, Math.ceil(cleanStudentIds.length / 2))
+  }
+
+  return Math.min(classroomLimit, Math.ceil(cleanStudentIds.length / 8))
+}
+
 function getStudentGroupLevelDistance(studentIds = [], students = [], levels = []) {
   const studentsById = new Map(students.map(student => [student.id, student]))
   const orders = studentIds
@@ -937,6 +949,20 @@ function AdminDashboard() {
     return Math.max(1, Math.min(classroomLimit, studentLimit))
   }
 
+  const getAiPlanRecommendedClassCount = (slotGroup = aiPlanGroup, suggestions = []) => {
+    const maxClasses = getAiPlanMaxClasses(slotGroup)
+    const suggestionCount = (suggestions || []).filter(suggestion => suggestion.studentIds?.length).length
+    const proximityCount = getRecommendedClassCountForStudents(
+      slotGroup?.studentIds || [],
+      sortedStudents,
+      data.levels,
+      maxClasses
+    )
+
+    if (!suggestionCount) return Math.max(1, proximityCount)
+    return Math.max(1, Math.min(maxClasses, proximityCount, suggestionCount))
+  }
+
   const getSourceClassIdsForStudentIds = (slotGroup, studentIds = []) => {
     const selected = new Set(studentIds)
     return (slotGroup?.sourceClassIds || []).filter(classId => {
@@ -1347,10 +1373,7 @@ function AdminDashboard() {
       } catch (usageError) {
         console.warn('No se pudo registrar el uso de IA.', usageError)
       }
-      const initialClassCount = Math.max(1, Math.min(
-        getAiPlanMaxClasses(slotGroup),
-        plan.suggestions?.length || 1
-      ))
+      const initialClassCount = getAiPlanRecommendedClassCount(slotGroup, plan.suggestions || [])
 
       setAiClassPlan(nextPlan)
       setAiPlanGroup(slotGroup)
