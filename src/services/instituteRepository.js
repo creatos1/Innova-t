@@ -20,6 +20,7 @@ import { auth, db } from '../firebase'
 import {
   ACADEMIC_LEVELS,
   LESSONS,
+  isFreeTopicLesson,
   isLegacyCatalogLevelId,
   isLegacyLessonId
 } from '../domain/academicCatalog'
@@ -92,12 +93,19 @@ function getPreviousLessonIds(currentLessonId) {
     || lesson.code === cleanLessonId.toUpperCase()
   ))
 
+  if (isFreeTopicLesson(currentLesson)) return []
   if (!currentLesson?.globalOrder) return []
 
   return LESSONS
-    .filter(lesson => lesson.globalOrder && lesson.globalOrder < currentLesson.globalOrder)
+    .filter(lesson => !isFreeTopicLesson(lesson) && lesson.globalOrder && lesson.globalOrder < currentLesson.globalOrder)
     .sort((a, b) => a.globalOrder - b.globalOrder)
     .map(lesson => lesson.id)
+}
+
+function isFreeTopicLessonId(lessonId) {
+  const cleanLessonId = String(lessonId || '').trim()
+  const lesson = LESSONS.find(item => item.id === cleanLessonId || item.code === cleanLessonId.toUpperCase())
+  return isFreeTopicLesson(lesson)
 }
 
 function isStaff(profile) {
@@ -392,6 +400,7 @@ export async function createStudentRecord(payload) {
     currentLevelId: payload.currentLevelId,
     currentLessonId: payload.currentLessonId,
     completedLessonIds,
+    excludedLessonIds: [],
     enrollmentDate: payload.enrollmentDate,
     ...(payload.uid ? { uid: payload.uid } : {}),
     status: payload.status || 'activo',
@@ -457,13 +466,20 @@ export async function updateStudentRecord(studentId, payload) {
   }
 
   if (Array.isArray(payload.completedLessonIds)) {
-    updatePayload.completedLessonIds = payload.completedLessonIds
+    updatePayload.completedLessonIds = payload.completedLessonIds.filter(lessonId => !isFreeTopicLessonId(lessonId))
+  }
+
+  if (Array.isArray(payload.excludedLessonIds)) {
+    updatePayload.excludedLessonIds = payload.excludedLessonIds.filter(lessonId => !isFreeTopicLessonId(lessonId))
   }
 
   if (completedLessonIds.length) {
     updatePayload.completedLessonIds = Array.isArray(updatePayload.completedLessonIds)
       ? uniqueValues([...updatePayload.completedLessonIds, ...completedLessonIds])
       : arrayUnion(...completedLessonIds)
+    updatePayload.excludedLessonIds = Array.isArray(updatePayload.excludedLessonIds)
+      ? updatePayload.excludedLessonIds.filter(lessonId => !completedLessonIds.includes(lessonId))
+      : arrayRemove(...completedLessonIds)
   }
 
   if (uid && email && oldEmail !== email) {
@@ -707,6 +723,75 @@ export async function deleteClassRecord(classId) {
   await deleteDoc(doc(db, COLLECTIONS.classes, classId))
 }
 
+function sanitizeClassIdSegment(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
+export async function dissolveClassToPendingReservationsRecord(classId) {
+  const classRef = doc(db, COLLECTIONS.classes, classId)
+  const classSnapshot = await getDoc(classRef)
+
+  if (!classSnapshot.exists()) return
+
+  const classItem = classSnapshot.data()
+  const studentIds = Array.isArray(classItem.studentIds) ? classItem.studentIds : []
+  const isAlreadyPending = classItem.status === 'pendiente_asignacion'
+    || (classItem.reservationSource === 'student-auto' && !classItem.teacherId)
+
+  if (!studentIds.length || isAlreadyPending) {
+    await deleteDoc(classRef)
+    return
+  }
+
+  const batch = writeBatch(db)
+  const cleanClassId = sanitizeClassIdSegment(classId)
+  const date = classItem.date || ''
+  const time = classItem.time || ''
+  const durationHours = Number(classItem.durationHours || 1) || 1
+
+  studentIds.forEach(studentId => {
+    const cleanStudentId = sanitizeClassIdSegment(studentId)
+    const restoredId = `restored-${cleanClassId}-${cleanStudentId}`
+    const reservationRef = doc(db, COLLECTIONS.classes, restoredId)
+    const reservationBlockId = `restored-block-${cleanClassId}-${cleanStudentId}`
+
+    batch.set(reservationRef, {
+      id: restoredId,
+      slotKey: `${date}-${time}-${cleanStudentId}`,
+      levelId: classItem.levelId || '',
+      lessonIds: classItem.lessonIds || [],
+      lessonName: classItem.lessonName || '',
+      teacherId: '',
+      teacherName: '',
+      date,
+      time,
+      startAt: classItem.startAt || null,
+      endAt: classItem.endAt || null,
+      durationHours,
+      studentIds: [studentId],
+      classroomId: '',
+      classroomName: '',
+      room: 'Por asignar',
+      mode: classItem.mode || 'presencial',
+      status: 'pendiente_asignacion',
+      reservationSource: 'student-auto',
+      reservationBlockId,
+      reservationBlockHours: durationHours,
+      reservationBlockStartTime: time,
+      restoredFromClassId: classId,
+      aiAssignment: null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    }, { merge: true })
+  })
+
+  batch.delete(classRef)
+  await batch.commit()
+}
+
 export async function createBlockoutRecord(payload) {
   const result = await addDoc(collection(db, COLLECTIONS.blockouts), {
     date: payload.date,
@@ -934,9 +1019,10 @@ export async function createAttendanceRecord(payload) {
   }
   const result = await addDoc(collection(db, COLLECTIONS.attendance), attendancePayload)
 
-  if (attendancePayload.attended && attendancePayload.studentId && attendancePayload.lessonId) {
+  if (attendancePayload.attended && attendancePayload.studentId && attendancePayload.lessonId && !isFreeTopicLessonId(attendancePayload.lessonId)) {
     await updateDoc(doc(db, COLLECTIONS.students, attendancePayload.studentId), {
       completedLessonIds: arrayUnion(attendancePayload.lessonId),
+      excludedLessonIds: arrayRemove(attendancePayload.lessonId),
       updatedAt: serverTimestamp()
     })
   }
@@ -980,9 +1066,10 @@ export async function createAttendanceRecords(records = []) {
 
     batch.set(attendanceRef, attendancePayload, { merge: true })
 
-    if (attendancePayload.attended && attendancePayload.studentId && attendancePayload.lessonId) {
+    if (attendancePayload.attended && attendancePayload.studentId && attendancePayload.lessonId && !isFreeTopicLessonId(attendancePayload.lessonId)) {
       batch.update(doc(db, COLLECTIONS.students, attendancePayload.studentId), {
         completedLessonIds: arrayUnion(attendancePayload.lessonId),
+        excludedLessonIds: arrayRemove(attendancePayload.lessonId),
         updatedAt: serverTimestamp()
       })
     }
@@ -1237,17 +1324,21 @@ export async function updateAttendanceStatus(attendanceId, payload) {
     updatedAt: serverTimestamp()
   })
 
-  if (payload.attended === true && existingAttendance.studentId && lessonId) {
+  if (payload.attended === true && existingAttendance.studentId && lessonId && !isFreeTopicLessonId(lessonId)) {
     await updateDoc(doc(db, COLLECTIONS.students, existingAttendance.studentId), {
       completedLessonIds: arrayUnion(lessonId),
+      excludedLessonIds: arrayRemove(lessonId),
       updatedAt: serverTimestamp()
     })
   }
 }
 
-export async function syncAttendanceProgressRecords(records = [], classes = []) {
+export async function syncAttendanceProgressRecords(records = [], classes = [], students = []) {
   const classLessonById = new Map(
     classes.map(classItem => [classItem.id, classItem.lessonIds?.[0] || ''])
+  )
+  const excludedByStudentId = new Map(
+    students.map(student => [student.id, new Set(Array.isArray(student.excludedLessonIds) ? student.excludedLessonIds : [])])
   )
   const operations = records
     .filter(record => record.attended === true && record.studentId)
@@ -1256,12 +1347,15 @@ export async function syncAttendanceProgressRecords(records = [], classes = []) 
       lessonId: record.lessonId || classLessonById.get(record.classId) || ''
     }))
     .filter(item => item.lessonId)
+    .filter(item => !isFreeTopicLessonId(item.lessonId))
+    .filter(item => !excludedByStudentId.get(item.studentId)?.has(item.lessonId))
 
   if (!operations.length) return 0
 
   await commitBatchOperations(operations.map(item => batch => {
     batch.update(doc(db, COLLECTIONS.students, item.studentId), {
       completedLessonIds: arrayUnion(item.lessonId),
+      excludedLessonIds: arrayRemove(item.lessonId),
       updatedAt: serverTimestamp()
     })
   }))

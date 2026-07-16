@@ -2348,6 +2348,37 @@ html[data-theme='dark'] .sidebar-nav a:hover {
   overflow: auto;
 }
 
+.retake-row {
+  background: rgba(185, 28, 28, 0.06);
+  border-color: rgba(185, 28, 28, 0.24);
+}
+
+.retake-label,
+.attendance-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.retake-label {
+  color: #b91c1c;
+}
+
+.attendance-label {
+  color: #64748b;
+}
+
+.retake-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #dc2626;
+  display: inline-block;
+}
+
 .nested-modal {
   z-index: 80;
 }
@@ -2559,6 +2590,63 @@ html[data-theme='dark'] .sidebar-nav a:hover {
   gap: 10px;
   flex-wrap: wrap;
   margin-bottom: 14px;
+}
+
+.showtime-filter-panel {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.showtime-date-picker {
+  display: grid;
+  gap: 6px;
+  min-width: 320px;
+  font-weight: 800;
+}
+
+.showtime-date-picker-control {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) auto;
+  gap: 8px;
+}
+
+.showtime-date-display {
+  min-height: 44px;
+  border: 1px solid #9fb5c9;
+  background: #ffffff;
+  color: #18202b;
+  padding: 8px 10px;
+  font: inherit;
+}
+
+.showtime-date-trigger {
+  min-height: 44px;
+  border: 1px solid #9fb5c9;
+  background: #eef6ff;
+  color: #0f3d5f;
+  padding: 8px 12px;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.showtime-native-date-input {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.showtime-filter-panel small {
+  color: #475467;
+  padding-bottom: 11px;
 }
 
 .showtime-hour-options button {

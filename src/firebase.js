@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app'
-import { getAuth } from 'firebase/auth'
+import { browserLocalPersistence, getAuth, setPersistence } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
 import { getStorage } from 'firebase/storage'
 import { getAnalytics, isSupported } from 'firebase/analytics'
@@ -19,5 +19,8 @@ export const analyticsPromise = isSupported().then((supported) => (
   supported ? getAnalytics(app) : null
 ))
 export const auth = getAuth(app)
+setPersistence(auth, browserLocalPersistence).catch(error => {
+  console.warn('No se pudo activar persistencia local de sesion.', error)
+})
 export const db = getFirestore(app)
 export const storage = getStorage(app)

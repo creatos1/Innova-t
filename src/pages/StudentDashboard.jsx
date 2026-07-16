@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { updatePassword } from 'firebase/auth'
+import { signOut, updatePassword } from 'firebase/auth'
 import ActionMessageModal from '../components/ActionMessageModal'
 import BrandLogo from '../components/BrandLogo'
 import StatusBadge from '../components/StatusBadge'
@@ -24,6 +24,7 @@ import {
 } from '../domain/scheduleMatcher'
 import { downloadPaymentReceipt } from '../services/paymentReceiptPdf'
 import { useInstituteData } from '../services/useInstituteData'
+import { auth } from '../firebase'
 
 const TABS = [
   { id: 'reserve', label: 'Reservar clase', labelEn: 'Book class' },
@@ -58,6 +59,16 @@ function getEffectiveClassStatus(classItem) {
 function getReservedClassHours(classItem) {
   const hours = Number(classItem.durationHours || 1)
   return Number.isFinite(hours) ? Math.max(1, hours) : 1
+}
+
+function getGradeStatus(grade) {
+  const values = [grade?.oral, grade?.written]
+    .filter(value => value !== null && value !== undefined && value !== '')
+    .map(Number)
+    .filter(value => Number.isFinite(value))
+
+  if (!values.length) return 'Pendiente'
+  return values.some(value => value < 8) ? 'Reprobado' : 'Aprobado'
 }
 
 function buildUntilOptions(startTime, durations = []) {
@@ -103,9 +114,14 @@ function StudentDashboard() {
   useEffect(() => {
     if (loading || !profile) return
     const role = profile.rol || profile.role
-    if (role === 'admin') navigate('/admin-dashboard/', { replace: true })
-    if (role === 'teacher') navigate('/teacher-dashboard/', { replace: true })
+    if (role !== 'estudiante') {
+      signOut(auth).finally(() => navigate('/login', { replace: true }))
+    }
   }, [loading, navigate, profile])
+
+  const logout = () => {
+    signOut(auth).finally(() => navigate('/login', { replace: true }))
+  }
 
   useEffect(() => {
     if (profile?.studentId) {
@@ -592,7 +608,7 @@ function StudentDashboard() {
               <td>{getLevel(grade.levelId, data.levels)?.shortName || grade.levelId}</td>
               <td>{grade.oral ?? '-'}</td>
               <td>{grade.written ?? '-'}</td>
-              <td>{grade.oral != null && grade.written != null ? 'Capturada' : 'Pendiente'}</td>
+              <td>{getGradeStatus(grade)}</td>
             </tr>
           ))}
           {!grades.length && (
@@ -661,7 +677,7 @@ function StudentDashboard() {
             </div>
             <div className="header-actions">
               <SystemControls />
-              <Link className="btn btn-secondary" to="/login">{logoutLabel}</Link>
+              <button className="btn btn-secondary" type="button" onClick={logout}>{logoutLabel}</button>
             </div>
           </header>
 

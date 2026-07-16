@@ -95,11 +95,11 @@ export function formatDateInputLabel(dateValue) {
   const parsed = parseDateInput(dateValue)
   if (!parsed) return '-'
 
-  return new Intl.DateTimeFormat('es-MX', {
+  return new Intl.DateTimeFormat('en-US', {
     timeZone: MEXICO_TIME_ZONE,
+    month: '2-digit',
     day: '2-digit',
-    month: 'short',
-    year: 'numeric'
+    year: '2-digit'
   }).format(new Date(`${dateValue}T12:00:00-06:00`))
 }
 

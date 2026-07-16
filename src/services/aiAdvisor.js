@@ -104,9 +104,16 @@ function getClassTime(classItem) {
   return classItem.time || getClassTimeValue(classItem.startAt)
 }
 
+function isFreeTopicLessonId(lessonId) {
+  return FREE_TOPIC_LESSON_IDS.includes(String(lessonId || '').trim())
+}
+
 function buildLessonAttemptCounts(student, classes = []) {
   const studentId = typeof student === 'string' ? student : student?.id
+  const excludedLessonIds = new Set(Array.isArray(student?.excludedLessonIds) ? student.excludedLessonIds : [])
   const initialCounts = (Array.isArray(student?.completedLessonIds) ? student.completedLessonIds : [])
+    .filter(lessonId => !isFreeTopicLessonId(lessonId))
+    .filter(lessonId => !excludedLessonIds.has(lessonId))
     .reduce((counts, lessonId) => {
       counts[lessonId] = Math.max(counts[lessonId] || 0, 1)
       return counts
@@ -117,6 +124,7 @@ function buildLessonAttemptCounts(student, classes = []) {
     if (!classItem.studentIds?.includes(studentId)) return counts
 
     ;(classItem.lessonIds || []).forEach(lessonId => {
+      if (isFreeTopicLessonId(lessonId)) return
       counts[lessonId] = (counts[lessonId] || 0) + 1
     })
 
@@ -125,10 +133,23 @@ function buildLessonAttemptCounts(student, classes = []) {
 }
 
 function getCompletedLessonSet(student) {
-  return new Set(Array.isArray(student?.completedLessonIds) ? student.completedLessonIds : [])
+  const excludedLessonIds = new Set(Array.isArray(student?.excludedLessonIds) ? student.excludedLessonIds : [])
+  return new Set((Array.isArray(student?.completedLessonIds) ? student.completedLessonIds : []).filter(lessonId => !isFreeTopicLessonId(lessonId) && !excludedLessonIds.has(lessonId)))
 }
 
 function getGroupLessonStats(lessonId, selectedStudents = [], attemptsByStudent = new Map()) {
+  if (isFreeTopicLessonId(lessonId)) {
+    return {
+      completedCount: 0,
+      maxCount: 0,
+      totalCount: 0,
+      unseenCount: selectedStudents.length,
+      allUnseen: true,
+      hasCompletedRepeat: false,
+      hasThirdRepeatRisk: false
+    }
+  }
+
   const counts = selectedStudents.map(student => attemptsByStudent.get(student.id)?.[lessonId] || 0)
   const completedCount = selectedStudents.filter(student => getCompletedLessonSet(student).has(lessonId)).length
   const maxCount = counts.length ? Math.max(...counts) : 0
@@ -184,11 +205,14 @@ function getLessonSequenceNumber(lesson) {
 
 function getStudentAcademicPosition(student, lessons = [], levels = []) {
   const currentLesson = lessons.find(lesson => lesson.id === student?.currentLessonId)
+  const excludedLessonIds = new Set(Array.isArray(student?.excludedLessonIds) ? student.excludedLessonIds : [])
   const completedPositions = (student?.completedLessonIds || [])
+    .filter(lessonId => !isFreeTopicLessonId(lessonId))
+    .filter(lessonId => !excludedLessonIds.has(lessonId))
     .map(lessonId => lessons.find(lesson => lesson.id === lessonId))
     .filter(Boolean)
     .map(getLessonSequenceNumber)
-  const currentPosition = getLessonSequenceNumber(currentLesson)
+  const currentPosition = isFreeTopicLesson(currentLesson) ? 0 : getLessonSequenceNumber(currentLesson)
   const maxCompleted = completedPositions.length ? Math.max(...completedPositions) : 0
 
   if (currentPosition || maxCompleted) return Math.max(currentPosition, maxCompleted)
@@ -279,8 +303,9 @@ function compactStudent(student, lessons = [], levels = [], classes = []) {
     lessonId: student.currentLessonId || '',
     lessonName: lesson?.name || '',
     academicPosition: getStudentAcademicPosition(student, lessons, levels),
-    completedLessonIds: Array.isArray(student.completedLessonIds) ? student.completedLessonIds : [],
-    avoidLessonIds: Array.isArray(student.completedLessonIds) ? student.completedLessonIds : [],
+    completedLessonIds: (Array.isArray(student.completedLessonIds) ? student.completedLessonIds : []).filter(lessonId => !isFreeTopicLessonId(lessonId) && !(student.excludedLessonIds || []).includes(lessonId)),
+    excludedLessonIds: Array.isArray(student.excludedLessonIds) ? student.excludedLessonIds : [],
+    avoidLessonIds: (Array.isArray(student.completedLessonIds) ? student.completedLessonIds : []).filter(lessonId => !isFreeTopicLessonId(lessonId) && !(student.excludedLessonIds || []).includes(lessonId)),
     lessonAttempts: buildLessonAttemptCounts(student, classes),
     progressPercent: Number(student.progressPercent || 0),
     scholarshipStatus: student.scholarshipStatus || ''
@@ -327,7 +352,7 @@ Reglas reales:
 - Puedes mezclar estudiantes de distintos niveles si eso mejora la operacion; elige un tema util para la mayoria.
 - Si se forman varias clases del mismo horario, separa por proximidad academica: Pre-Starter con Starter, Beginner con Intermediate, Advanced con Advanced cuando sea posible.
 - Nunca mezcles Advanced con Pre-Starter/Starter si hay otro alumno Advanced o Intermediate disponible en esa misma ventana.
-- Si el grupo mezcla niveles bastante diferenciados (2 o mas niveles de distancia), usa Tema Libre: FREE_TALKING_TIME, FREE_VOCABULARY o FREE_GAMES.
+- Si el grupo mezcla niveles bastante diferenciados (2 o mas niveles de distancia), usa FREE TIME: FREE_TALKING_TIME, FREE_VOCABULARY o FREE_GAMES.
 - Puedes proponer varias clases para la misma fecha/hora si hay classrooms activos suficientes y eso mejora el acomodo.
 - Nunca propongas mas clases simultaneas que classrooms activos disponibles.
 - Nunca propongas mas clases simultaneas que teacherCapacity.
@@ -342,12 +367,14 @@ Reglas reales:
 - Conserva solo studentIds que ya esten en cualquiera de las reservas sourceClassIds.
 - Preferencia: elegir lecciones que el alumno no ha tomado.
 - completedLessonIds / avoidLessonIds son lecciones que el alumno ya tiene marcadas como tomadas en su checklist. Evitalas antes que cualquier otra regla academica.
+- excludedLessonIds son lecciones que admin desmarco para recursar; esas SI pueden volver a sugerirse.
 - No sugieras una leccion normal si al menos un alumno del grupo ya la tiene en completedLessonIds / avoidLessonIds.
 - En cada alumno, lessonAttempts indica cuantas veces ya tiene tomada, marcada o programada una leccion.
 - Ningun alumno debe tomar una misma leccion por tercera vez.
 - Prioridad al elegir tema: 1) nadie del grupo lo tiene marcado, 2) cercania de nivel, 3) menor total de repeticiones.
-- Si hay diferencia academica grande, usa Tema Libre.
-- Si no hay leccion viable, usa Tema Libre. Si tampoco hay Tema Libre viable, deja lessonId como "".
+- Si hay diferencia academica grande, usa FREE TIME.
+- FREE TIME (Talking Time, Vocabulary, Games) no cuenta como progreso/checklist y se puede repetir varias veces.
+- Si no hay leccion viable, usa FREE TIME. Si tampoco hay FREE TIME viable, deja lessonId como "".
 - Usa summary, reason y warnings muy cortos.
 
 Lecciones disponibles:

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { signOut } from 'firebase/auth'
 import ActionMessageModal from '../components/ActionMessageModal'
 import BrandLogo from '../components/BrandLogo'
 import StatusBadge from '../components/StatusBadge'
 import SystemControls, { useUiLanguage } from '../components/SystemControls'
-import { getCanonicalLevelId, getLesson, getLessonsByLevel, getLevel, isFreeTopicLevelId } from '../domain/academicCatalog'
+import { getCanonicalLevelId, getLesson, getLessonsByLevel, getLevel, isFreeTopicLesson, isFreeTopicLevelId } from '../domain/academicCatalog'
 import { formatDateTime, toDate } from '../domain/dateUtils'
 import {
   buildClassSlotKey,
@@ -22,6 +23,7 @@ import { formatLoginIdentifierInput, normalizeLoginId } from '../services/loginA
 import { recordAiUsageEvent } from '../services/instituteRepository'
 import { activateTeacherPanelProfile } from '../services/panelRole'
 import { useInstituteData } from '../services/useInstituteData'
+import { auth } from '../firebase'
 
 const TABS = [
   { id: 'classes', label: 'RESERVAS', labelEn: 'BOOKINGS' },
@@ -186,15 +188,31 @@ function buildStudentLessonConflictMessage(conflictClass, studentIds = [], lesso
   return `${studentName} ya tiene una reserva o clase registrada para ${lessonName}. Cambia el tema o quita al alumno antes de formar la clase.`
 }
 
-function getRegisteredLessonIdsForStudent(studentId, classes = [], attendance = [], students = []) {
+function isFreeTopicLessonId(lessonId, lessons = []) {
+  return isFreeTopicLesson(getLesson(lessonId, lessons))
+}
+
+function isFailedGrade(grade) {
+  if (!grade) return false
+  const values = [grade.oral, grade.written]
+    .filter(value => value !== null && value !== undefined && value !== '')
+    .map(Number)
+    .filter(value => Number.isFinite(value))
+
+  return values.some(value => value < 8)
+}
+
+function getRegisteredLessonIdsForStudent(studentId, classes = [], attendance = [], students = [], lessons = []) {
   const student = students.find(item => item.id === studentId)
-  const lessonIds = new Set(Array.isArray(student?.completedLessonIds) ? student.completedLessonIds : [])
-  getAttendedLessonIdsForStudent(studentId, classes, attendance).forEach(lessonId => lessonIds.add(lessonId))
+  const excludedLessonIds = new Set(Array.isArray(student?.excludedLessonIds) ? student.excludedLessonIds : [])
+  const lessonIds = new Set((Array.isArray(student?.completedLessonIds) ? student.completedLessonIds : []).filter(lessonId => !isFreeTopicLessonId(lessonId, lessons) && !excludedLessonIds.has(lessonId)))
+  getAttendedLessonIdsForStudent(studentId, classes, attendance, lessons).forEach(lessonId => lessonIds.add(lessonId))
+  excludedLessonIds.forEach(lessonId => lessonIds.delete(lessonId))
 
   return lessonIds
 }
 
-function getAttendedLessonIdsForStudent(studentId, classes = [], attendance = []) {
+function getAttendedLessonIdsForStudent(studentId, classes = [], attendance = [], lessons = []) {
   const attendedClassIds = new Set(
     attendance
       .filter(record => record.studentId === studentId && record.attended === true)
@@ -203,14 +221,16 @@ function getAttendedLessonIdsForStudent(studentId, classes = [], attendance = []
   const lessonIds = new Set(
     attendance
       .filter(record => record.studentId === studentId && record.attended === true && record.lessonId)
+      .filter(record => !isFreeTopicLessonId(record.lessonId, lessons))
       .map(record => record.lessonId)
   )
 
   classes.forEach(classItem => {
     if ((classItem.status || 'programada') === 'cancelada') return
     if (!attendedClassIds.has(classItem.id)) return
+    if (isFreeTopicLevelId(classItem.levelId)) return
     ;(classItem.lessonIds || []).forEach(lessonId => {
-      if (lessonId) lessonIds.add(lessonId)
+      if (lessonId && !isFreeTopicLessonId(lessonId, lessons)) lessonIds.add(lessonId)
     })
   })
 
@@ -312,11 +332,14 @@ function getLessonSequenceNumber(lesson) {
 
 function getStudentAcademicPosition(student, lessons = [], levels = []) {
   const currentLesson = lessons.find(lesson => lesson.id === student?.currentLessonId)
+  const excludedLessonIds = new Set(Array.isArray(student?.excludedLessonIds) ? student.excludedLessonIds : [])
   const completedPositions = (student?.completedLessonIds || [])
+    .filter(lessonId => !isFreeTopicLessonId(lessonId, lessons))
+    .filter(lessonId => !excludedLessonIds.has(lessonId))
     .map(lessonId => lessons.find(lesson => lesson.id === lessonId))
     .filter(Boolean)
     .map(getLessonSequenceNumber)
-  const currentPosition = getLessonSequenceNumber(currentLesson)
+  const currentPosition = isFreeTopicLesson(currentLesson) ? 0 : getLessonSequenceNumber(currentLesson)
   const maxCompleted = completedPositions.length ? Math.max(...completedPositions) : 0
 
   if (currentPosition || maxCompleted) return Math.max(currentPosition, maxCompleted)
@@ -384,7 +407,7 @@ function findDefaultLessonForStudentGroup(studentIds = [], students = [], lesson
   const selectedStudents = studentIds.map(studentId => studentsById.get(studentId)).filter(Boolean)
   const isCleanForGroup = lesson => (
     lesson
-    && selectedStudents.every(student => !(student.completedLessonIds || []).includes(lesson.id))
+    && (isFreeTopicLesson(lesson) || selectedStudents.every(student => !(student.completedLessonIds || []).includes(lesson.id) || (student.excludedLessonIds || []).includes(lesson.id)))
   )
   const levelDistance = getStudentGroupLevelDistance(studentIds, students, levels)
   const freeTopicLesson = lessons.find(lesson => isFreeTopicLevelId(lesson.levelId) && isCleanForGroup(lesson))
@@ -413,7 +436,7 @@ function isLessonViableForStudentGroup(lesson, studentIds = [], students = [], l
   if (!lesson?.id || !studentIds.length) return false
   const studentsById = new Map(students.map(student => [student.id, student]))
   const selectedStudents = studentIds.map(studentId => studentsById.get(studentId)).filter(Boolean)
-  const alreadyTaken = selectedStudents.some(student => (student.completedLessonIds || []).includes(lesson.id))
+  const alreadyTaken = !isFreeTopicLesson(lesson) && selectedStudents.some(student => (student.completedLessonIds || []).includes(lesson.id) && !(student.excludedLessonIds || []).includes(lesson.id))
   if (alreadyTaken) return false
 
   const levelDistance = getStudentGroupLevelDistance(studentIds, students, levels)
@@ -480,7 +503,8 @@ function emptyStudentForm(today) {
     status: 'activo',
     scholarshipStatus: 'activa',
     progressPercent: 0,
-    completedLessonIds: []
+    completedLessonIds: [],
+    excludedLessonIds: []
   }
 }
 
@@ -496,7 +520,8 @@ function studentToForm(student, today) {
     status: student?.status || 'activo',
     scholarshipStatus: student?.scholarshipStatus || 'activa',
     progressPercent: Number(student?.progressPercent || 0),
-    completedLessonIds: Array.isArray(student?.completedLessonIds) ? student.completedLessonIds : []
+    completedLessonIds: Array.isArray(student?.completedLessonIds) ? student.completedLessonIds : [],
+    excludedLessonIds: Array.isArray(student?.excludedLessonIds) ? student.excludedLessonIds : []
   }
 }
 
@@ -524,6 +549,7 @@ function AdminDashboard() {
     createStudent,
     createTeacher,
     deleteClass,
+    dissolveClass,
     deleteBlockout,
     deleteClassroom,
     deleteLesson,
@@ -653,6 +679,15 @@ function AdminDashboard() {
     menu: uiLanguage === 'en' ? 'Menu' : 'Menu'
   }
   const requireLogin = !loading && (!user || !profile)
+  const logout = () => {
+    signOut(auth).finally(() => navigate('/login', { replace: true }))
+  }
+
+  useEffect(() => {
+    if (loading || requireLogin || isAdmin) return
+    signOut(auth).finally(() => navigate('/login', { replace: true }))
+  }, [isAdmin, loading, navigate, requireLogin])
+
   const sortedStudents = useMemo(() => sortByName(data.students), [data.students])
   const sortedTeachers = useMemo(() => sortByName(data.teachers), [data.teachers])
   const activeTeacherLimit = Math.max(1, Math.min(Number(availableTeacherSlots) || sortedTeachers.length || 1, sortedTeachers.length || 1))
@@ -705,8 +740,8 @@ function AdminDashboard() {
     sortedStudents.find(student => student.id === progressPreviewStudentId)
   ), [progressPreviewStudentId, sortedStudents])
   const progressPreviewRegisteredLessons = useMemo(() => (
-    getRegisteredLessonIdsForStudent(progressPreviewStudentId, data.classes, data.attendance, sortedStudents)
-  ), [data.attendance, data.classes, progressPreviewStudentId, sortedStudents])
+    getRegisteredLessonIdsForStudent(progressPreviewStudentId, data.classes, data.attendance, sortedStudents, data.lessons)
+  ), [data.attendance, data.classes, data.lessons, progressPreviewStudentId, sortedStudents])
   const selectedPaymentStudent = useMemo(() => (
     sortedStudents.find(student => student.id === paymentForm.studentId)
   ), [paymentForm.studentId, sortedStudents])
@@ -806,13 +841,16 @@ function AdminDashboard() {
   ), [data.attendance, data.classes, data.students])
   const selectedStudentRegisteredLessons = useMemo(() => (
     new Set([
-      ...getAttendedLessonIdsForStudent(selectedStudentId, data.classes, data.attendance),
-      ...(Array.isArray(studentDraft.completedLessonIds) ? studentDraft.completedLessonIds : [])
-    ])
-  ), [data.attendance, data.classes, selectedStudentId, studentDraft.completedLessonIds])
+      ...getAttendedLessonIdsForStudent(selectedStudentId, data.classes, data.attendance, data.lessons),
+      ...(Array.isArray(studentDraft.completedLessonIds) ? studentDraft.completedLessonIds.filter(lessonId => !isFreeTopicLessonId(lessonId, data.lessons)) : [])
+    ].filter(lessonId => !(studentDraft.excludedLessonIds || []).includes(lessonId)))
+  ), [data.attendance, data.classes, data.lessons, selectedStudentId, studentDraft.completedLessonIds, studentDraft.excludedLessonIds])
   const selectedStudentAttendedLessons = useMemo(() => (
-    getAttendedLessonIdsForStudent(selectedStudentId, data.classes, data.attendance)
-  ), [data.attendance, data.classes, selectedStudentId])
+    getAttendedLessonIdsForStudent(selectedStudentId, data.classes, data.attendance, data.lessons)
+  ), [data.attendance, data.classes, data.lessons, selectedStudentId])
+  const selectedStudentExcludedLessons = useMemo(() => (
+    new Set(Array.isArray(studentDraft.excludedLessonIds) ? studentDraft.excludedLessonIds : [])
+  ), [studentDraft.excludedLessonIds])
   const paymentsByStudentDueDate = useMemo(() => (
     data.payments.reduce((map, payment) => {
       const key = getPaymentKey(payment.studentId, payment.dueDate)
@@ -1202,17 +1240,22 @@ function AdminDashboard() {
   }
 
   const toggleStudentCompletedLesson = (lessonId, checked) => {
+    if (isFreeTopicLessonId(lessonId, data.lessons)) return
     setStudentDraft(prev => {
-      const current = new Set(Array.isArray(prev.completedLessonIds) ? prev.completedLessonIds : [])
+      const current = new Set((Array.isArray(prev.completedLessonIds) ? prev.completedLessonIds : []).filter(id => !isFreeTopicLessonId(id, data.lessons)))
+      const excluded = new Set(Array.isArray(prev.excludedLessonIds) ? prev.excludedLessonIds : [])
       if (checked) {
         current.add(lessonId)
+        excluded.delete(lessonId)
       } else {
         current.delete(lessonId)
+        excluded.add(lessonId)
       }
 
       return {
         ...prev,
-        completedLessonIds: Array.from(current)
+        completedLessonIds: Array.from(current),
+        excludedLessonIds: Array.from(excluded)
       }
     })
   }
@@ -1366,7 +1409,7 @@ function AdminDashboard() {
         classroomId: previous.classroomId || activeClassrooms[index % Math.max(activeClassrooms.length, 1)]?.id || '',
         studentIds,
         reason: groupLevelDistance >= 2
-          ? 'Grupo con salto amplio de nivel; Tema Libre es aceptable si no conviene separarlo mas.'
+          ? 'Grupo con salto amplio de nivel; FREE TIME es aceptable si no conviene separarlo mas.'
           : 'Grupo formado por cercania de nivel academico.',
         confidence: Number(suggestion.confidence || 0.8)
       }
@@ -1610,24 +1653,15 @@ function AdminDashboard() {
     }
 
     for (const draft of drafts) {
-      const repeatedProgressStudentId = draft.studentIds.find(studentId => (
-        getRegisteredLessonIdsForStudent(studentId, data.classes, data.attendance, sortedStudents).has(draft.lessonId)
-      ))
-
-      if (repeatedProgressStudentId) {
-        const student = sortedStudents.find(item => item.id === repeatedProgressStudentId)
-        const lesson = getLesson(draft.lessonId, data.lessons)
-        setMessage(`${student?.publicId || 'Alumno'} ya tiene registrado ${lesson?.name || 'este tema'}. Cambia el tema.`)
-        return
-      }
-
       const sourceClassIds = getSourceClassIdsForStudentIds(aiPlanGroup, draft.studentIds)
-      const conflictClass = findStudentLessonClassConflict({
-        studentIds: draft.studentIds,
-        lessonId: draft.lessonId,
-        classes: data.classes,
-        ignoredClassIds: sourceClassIds
-      })
+      const conflictClass = isFreeTopicLessonId(draft.lessonId, data.lessons)
+        ? null
+        : findStudentLessonClassConflict({
+          studentIds: draft.studentIds,
+          lessonId: draft.lessonId,
+          classes: data.classes,
+          ignoredClassIds: sourceClassIds
+        })
 
       if (conflictClass) {
         setMessage(buildStudentLessonConflictMessage(conflictClass, draft.studentIds, draft.lessonId, sortedStudents, data.lessons))
@@ -1677,23 +1711,14 @@ function AdminDashboard() {
       return
     }
 
-    const repeatedProgressStudentId = classStudentIds.find(studentId => (
-      getRegisteredLessonIdsForStudent(studentId, data.classes, data.attendance, sortedStudents).has(classForm.lessonId)
-    ))
-
-    if (repeatedProgressStudentId) {
-      const student = sortedStudents.find(item => item.id === repeatedProgressStudentId)
-      const lesson = getLesson(classForm.lessonId, data.lessons)
-      setMessage(`${student?.publicId || 'Alumno'} ya tiene registrado ${lesson?.name || 'este tema'}. Cambia el tema.`)
-      return
-    }
-
-    const conflictClass = findStudentLessonClassConflict({
-      studentIds: classStudentIds,
-      lessonId: classForm.lessonId,
-      classes: data.classes,
-      ignoredClassIds: uniqueValues([editingClassId, ...mergeSourceClassIds])
-    })
+    const conflictClass = isFreeTopicLessonId(classForm.lessonId, data.lessons)
+      ? null
+      : findStudentLessonClassConflict({
+        studentIds: classStudentIds,
+        lessonId: classForm.lessonId,
+        classes: data.classes,
+        ignoredClassIds: uniqueValues([editingClassId, ...mergeSourceClassIds])
+      })
 
     if (conflictClass) {
       setMessage(buildStudentLessonConflictMessage(conflictClass, classStudentIds, classForm.lessonId, sortedStudents, data.lessons))
@@ -1844,6 +1869,20 @@ function AdminDashboard() {
     }
 
     setMessage(`${oldPendingAssignmentClasses.length} reserva(s) anterior(es) eliminada(s).`)
+  }
+
+  const dissolveRegisteredClass = async (classItem) => {
+    const isPending = classItem.status === 'pendiente_asignacion'
+      || (classItem.reservationSource === 'student-auto' && !classItem.teacherId)
+
+    if (isPending) {
+      await deleteClass(classItem.id)
+      return
+    }
+
+    const confirmed = window.confirm('Esta clase se eliminara y sus alumnos volveran a Reservas por asignar. ¿Continuar?')
+    if (!confirmed) return
+    await dissolveClass(classItem.id)
   }
 
   const submitAttendance = async (event) => {
@@ -2156,22 +2195,26 @@ function AdminDashboard() {
                 <details className="dropdown-checklist lesson-history-checklist">
                   <summary>{selectedStudentRegisteredLessons.size} temas registrados para este alumno</summary>
                   <div className="lesson-history-grid">
-                    {sortedLevels.map(level => (
+                    {academicLevels.map(level => (
                       <div className="lesson-history-group" key={level.id}>
                         <strong>{level.shortName || level.name}</strong>
                         {getLessonsByLevel(level.id, data.lessons).map(lesson => {
                           const checked = selectedStudentRegisteredLessons.has(lesson.id)
                           const lockedByAttendance = selectedStudentAttendedLessons.has(lesson.id)
+                          const recursing = selectedStudentExcludedLessons.has(lesson.id)
 
                           return (
-                            <label className="lesson-history-row" key={lesson.id}>
+                            <label className={recursing ? 'lesson-history-row retake-row' : 'lesson-history-row'} key={lesson.id}>
                               <input
                                 type="checkbox"
                                 checked={checked}
                                 onChange={event => toggleStudentCompletedLesson(lesson.id, event.target.checked)}
-                                disabled={!isAdmin || lockedByAttendance}
+                                disabled={!isAdmin}
                               />
-                              <span>{lesson.order}. {lesson.name}{lockedByAttendance ? ' - asistencia' : ''}</span>
+                              <span>
+                                {lesson.order}. {lesson.name}
+                                {recursing ? <small className="retake-label"><span className="retake-dot" />Recursando</small> : lockedByAttendance ? <small className="attendance-label">Asistencia previa</small> : null}
+                              </span>
                             </label>
                           )
                         })}
@@ -2206,6 +2249,7 @@ function AdminDashboard() {
                         const draft = gradeDrafts[key] || {}
                         const existingGrade = getGradeForLevel(selectedStudent.id, level.id)
                         const captured = existingGrade?.oral != null || existingGrade?.written != null
+                        const failed = isFailedGrade(existingGrade)
                         return (
                           <tr key={level.id}>
                             <td>{level.shortName || level.name}</td>
@@ -2214,7 +2258,8 @@ function AdminDashboard() {
                                 className="table-input"
                                 type="number"
                                 min="0"
-                                max="100"
+                                max="10"
+                                step="0.1"
                                 value={draft.oral ?? ''}
                                 onChange={event => updateGradeDraft(selectedStudent.id, level.id, { oral: event.target.value })}
                               />
@@ -2224,12 +2269,15 @@ function AdminDashboard() {
                                 className="table-input"
                                 type="number"
                                 min="0"
-                                max="100"
+                                max="10"
+                                step="0.1"
                                 value={draft.written ?? ''}
                                 onChange={event => updateGradeDraft(selectedStudent.id, level.id, { written: event.target.value })}
                               />
                             </td>
-                            <td>{captured ? 'Capturada' : 'Pendiente'}</td>
+                            <td>
+                              {failed ? <StatusBadge severity="risk">Reprobado</StatusBadge> : captured ? <StatusBadge severity="ok">Aprobado</StatusBadge> : 'Pendiente'}
+                            </td>
                             <td>
                               <div className="table-actions">
                                 <button className="btn btn-primary small-btn" type="button" onClick={() => submitGradeForLevel(selectedStudent.id, level.id)} disabled={saving || !isAdmin}>Guardar</button>
@@ -2817,7 +2865,7 @@ function AdminDashboard() {
             <button className="btn btn-secondary small-btn" type="button" onClick={() => setProgressPreviewStudentId('')}>Cerrar</button>
           </div>
           <div className="lesson-history-grid progress-preview-grid">
-            {sortedLevels.map(level => (
+            {academicLevels.map(level => (
               <div className="lesson-history-group" key={level.id}>
                 <strong>{level.shortName || level.name}</strong>
                 {getLessonsByLevel(level.id, data.lessons).map(lesson => (
@@ -3066,10 +3114,10 @@ function AdminDashboard() {
                 </div>
                 <div className="row-actions">
                   <button className="btn btn-secondary small-btn" type="button" onClick={() => requestMistralClassPlan(group)} disabled={aiClassLoading}>
-                    {aiClassLoading ? 'Pensando...' : 'Sugerir con IA'}
+                    {aiClassLoading ? 'Pensando...' : 'Formar una clase con IA'}
                   </button>
                   <button className="btn btn-primary small-btn" type="button" onClick={() => applySlotGroup(group)}>
-                    Formar una clase
+                    Formar una clase MANUAL
                   </button>
                 </div>
               </div>
@@ -3180,9 +3228,35 @@ function AdminDashboard() {
           </button>
         </div>
         <div className="stack-list">
-          {visibleClassesByRecentDate.map(classItem => {
+          {visibleClassesByRecentDate.flatMap(classItem => {
             const lesson = getLesson(classItem.lessonIds?.[0], data.lessons)
             const level = getLevel(classItem.levelId || lesson?.levelId, data.levels)
+            const effectiveStatus = getEffectiveClassStatus(classItem)
+
+            if (effectiveStatus === 'pendiente_asignacion') {
+              const studentIds = classItem.studentIds?.length ? classItem.studentIds : ['']
+              return studentIds.map(studentId => {
+                const student = sortedStudents.find(item => item.id === studentId)
+                const studentLevel = getLevel(student?.currentLevelId || classItem.levelId || lesson?.levelId, data.levels)
+                const dateLabel = formatDateInputLabel(classItem.date || getClassDateValue(classItem.startAt))
+                const timeLabel = formatTimeLabel(classItem.time || getClassTimeValue(classItem.startAt))
+
+                return (
+                  <div className="list-row" key={`${classItem.id}-${studentId || 'pending'}`}>
+                    <div>
+                      <strong>{student ? `${student.publicId || student.id} - ${student.fullName || 'Alumno'}` : 'Alumno pendiente'}</strong>
+                      <small>{studentLevel?.shortName || studentLevel?.name || 'Nivel del alumno'} - {dateLabel} - {timeLabel}</small>
+                    </div>
+                    <div className="row-actions">
+                      <StatusBadge severity="warning">pendiente_asignacion</StatusBadge>
+                      <button className="btn btn-secondary small-btn" type="button" onClick={() => editClass(classItem)}>Editar</button>
+                      <button className="btn btn-secondary small-btn danger-btn" type="button" onClick={() => dissolveRegisteredClass(classItem)} disabled={saving}>Eliminar</button>
+                    </div>
+                  </div>
+                )
+              })
+            }
+
             return (
               <div className="list-row" key={classItem.id}>
                 <div>
@@ -3190,9 +3264,9 @@ function AdminDashboard() {
                   <small>{formatDateTime(classItem.startAt)} - {formatClassHours(classItem)} - {classItem.teacherName || 'Sin teacher'} - {classItem.classroomName || classItem.room || 'Sin classroom'} - {classItem.studentIds?.length || 0}/8 estudiantes - {classItem.reservationSource || 'manual'}</small>
                 </div>
                 <div className="row-actions">
-                  <StatusBadge severity={getEffectiveClassStatus(classItem) === 'pendiente_asignacion' ? 'warning' : getEffectiveClassStatus(classItem) === 'cancelada' ? 'risk' : getEffectiveClassStatus(classItem) === 'completada' ? 'ok' : 'info'}>{getEffectiveClassStatus(classItem)}</StatusBadge>
+                  <StatusBadge severity={effectiveStatus === 'cancelada' ? 'risk' : effectiveStatus === 'completada' ? 'ok' : 'info'}>{effectiveStatus}</StatusBadge>
                   <button className="btn btn-secondary small-btn" type="button" onClick={() => editClass(classItem)}>Editar</button>
-                  <button className="btn btn-secondary small-btn danger-btn" type="button" onClick={() => deleteClass(classItem.id)} disabled={saving}>Eliminar</button>
+                  <button className="btn btn-secondary small-btn danger-btn" type="button" onClick={() => dissolveRegisteredClass(classItem)} disabled={saving}>Eliminar</button>
                 </div>
               </div>
             )
@@ -3586,7 +3660,7 @@ function AdminDashboard() {
                   {uiText.switchTeacher}
                 </button>
               )}
-              <Link className="btn btn-secondary" to="/login">{uiText.logout}</Link>
+              <button className="btn btn-secondary" type="button" onClick={logout}>{uiText.logout}</button>
             </div>
           </header>
 

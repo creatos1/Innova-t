@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { updatePassword } from 'firebase/auth'
+import { signOut, updatePassword } from 'firebase/auth'
 import { collection, getDocs, limit, query, where } from 'firebase/firestore'
 import ActionMessageModal from '../components/ActionMessageModal'
 import BrandLogo from '../components/BrandLogo'
 import StatusBadge from '../components/StatusBadge'
 import SystemControls, { useUiLanguage } from '../components/SystemControls'
-import { getLesson, getLessonsByLevel, getLevel } from '../domain/academicCatalog'
+import { getLesson, getLessonsByLevel, getLevel, isFreeTopicLesson, isFreeTopicLevelId } from '../domain/academicCatalog'
 import { formatDateTime, toDate } from '../domain/dateUtils'
 import { getClassDateValue, getMexicoDateInput } from '../domain/scheduleMatcher'
-import { db } from '../firebase'
+import { auth, db } from '../firebase'
 import { activateAdminPanelProfile, getPreferredPanelRole } from '../services/panelRole'
 import { useInstituteData } from '../services/useInstituteData'
 
@@ -17,38 +17,113 @@ function sortByName(items = []) {
   return [...items].sort((a, b) => (a.fullName || '').localeCompare(b.fullName || '', 'es'))
 }
 
-function getEffectiveClassStatus(classItem) {
-  if (classItem.status === 'cancelada') return 'cancelada'
-  const endAt = toDate(classItem.endAt)
-  return endAt && endAt < new Date() ? 'completada' : 'programada'
-}
-
 function getClassDurationHours(classItem) {
   const hours = Number(classItem?.durationHours || 1)
   return Number.isFinite(hours) ? Math.max(1, hours) : 1
 }
 
-function getTakenLessonIds(student, classes = [], attendance = []) {
-  const studentId = student?.id
+function getTakenLessonIds(student, classes = [], attendance = [], lessons = []) {
+  const isFreeTopicLessonId = lessonId => isFreeTopicLesson(getLesson(lessonId, lessons))
+  const excludedLessonIds = new Set(Array.isArray(student?.excludedLessonIds) ? student.excludedLessonIds : [])
+  const lessonIds = new Set((Array.isArray(student?.completedLessonIds) ? student.completedLessonIds : []).filter(lessonId => !isFreeTopicLessonId(lessonId) && !excludedLessonIds.has(lessonId)))
   const attendedClassIds = new Set(
     attendance
-      .filter(record => record.studentId === studentId && record.attended === true)
+      .filter(record => record.studentId === student?.id && record.attended === true)
       .map(record => record.classId)
   )
 
-  return new Set(
-    [
-      ...(Array.isArray(student?.completedLessonIds) ? student.completedLessonIds : []),
-      ...classes
-      .filter(classItem => attendedClassIds.has(classItem.id))
-      .flatMap(classItem => classItem.lessonIds || [])
-      .filter(Boolean)
-    ]
-  )
+  attendance
+    .filter(record => record.studentId === student?.id && record.attended === true && record.lessonId)
+    .filter(record => !isFreeTopicLessonId(record.lessonId))
+    .filter(record => !excludedLessonIds.has(record.lessonId))
+    .forEach(record => lessonIds.add(record.lessonId))
+
+  classes.forEach(classItem => {
+    if ((classItem.status || 'programada') === 'cancelada') return
+    if (!attendedClassIds.has(classItem.id)) return
+    if (isFreeTopicLevelId(classItem.levelId)) return
+    ;(classItem.lessonIds || []).forEach(lessonId => {
+      if (lessonId && !isFreeTopicLessonId(lessonId) && !excludedLessonIds.has(lessonId)) lessonIds.add(lessonId)
+    })
+  })
+
+  return lessonIds
 }
 
 function TeacherDashboard() {
+  const navigate = useNavigate()
   const uiLanguage = useUiLanguage()
+  
+  const uiText = {
+    menu: uiLanguage === 'en' ? 'Menu' : 'Menu',
+    classes: uiLanguage === 'en' ? 'Classes' : 'Clases',
+    attendance: uiLanguage === 'en' ? 'Attendance' : 'Asistencia',
+    switchAdmin: uiLanguage === 'en' ? 'Switch to admin' : 'Cambiar a admin',
+    logout: uiLanguage === 'en' ? 'Log out' : 'Cerrar sesion',
+    loading: uiLanguage === 'en' ? 'Loading teacher panel' : 'Cargando panel teacher',
+    loginRequired: uiLanguage === 'en' ? 'Sign in' : 'Inicia sesion',
+    goToLogin: uiLanguage === 'en' ? 'Go to login' : 'Ir al login',
+    teacherPanel: uiLanguage === 'en' ? 'Teacher Panel' : 'Teacher Panel',
+    teacherOperation: uiLanguage === 'en' ? 'Teacher operation' : 'Operacion teacher',
+    myClassesAndStudents: uiLanguage === 'en' ? 'My classes and students' : 'Mis clases y alumnos',
+    takeAttendanceAndReview: uiLanguage === 'en' ? 'Take attendance and review your students\' progress.' : 'Toma asistencia y revisa progreso de tus alumnos.',
+    assignedClasses: uiLanguage === 'en' ? 'Assigned classes' : 'Clases asignadas',
+    historyOrCaptured: uiLanguage === 'en' ? 'History of previous classes or already captured lists.' : 'Historial de clases anteriores o listas ya capturadas.',
+    todayOrUpcoming: uiLanguage === 'en' ? 'Today or upcoming classes pending attendance.' : 'Clases de hoy o proximas pendientes de asistencia.',
+    todayUpcomingCount: uiLanguage === 'en' ? 'Today / upcoming' : 'Hoy / proximas',
+    previousCapturedCount: uiLanguage === 'en' ? 'Previous / captured' : 'Anteriores / capturadas',
+    date: uiLanguage === 'en' ? 'Date' : 'Fecha',
+    level: uiLanguage === 'en' ? 'Level' : 'Nivel',
+    lesson: uiLanguage === 'en' ? 'Lesson' : 'Leccion',
+    classroom: uiLanguage === 'en' ? 'Classroom' : 'Classroom',
+    students: uiLanguage === 'en' ? 'Students' : 'Alumnos',
+    hours: uiLanguage === 'en' ? 'Hours' : 'Horas',
+    list: uiLanguage === 'en' ? 'List' : 'Lista',
+    status: uiLanguage === 'en' ? 'Status' : 'Estatus',
+    noStudents: uiLanguage === 'en' ? 'No students' : 'Sin alumnos',
+    captured: uiLanguage === 'en' ? 'Captured' : 'Capturada',
+    canceled: uiLanguage === 'en' ? 'Canceled' : 'Cancelada',
+    completed: uiLanguage === 'en' ? 'Completed' : 'Completada',
+    scheduled: uiLanguage === 'en' ? 'Scheduled' : 'Programada',
+    noPreviousClasses: uiLanguage === 'en' ? 'No previous or captured classes.' : 'No hay clases anteriores o capturadas.',
+    noTodayClasses: uiLanguage === 'en' ? 'No today or upcoming classes pending.' : 'No tienes clases pendientes de hoy o proximas.',
+    reservationsByStudent: uiLanguage === 'en' ? 'Reservations by student' : 'Reservaciones por alumno',
+    takeAttendanceAndReviewClass: uiLanguage === 'en' ? 'Take attendance and review progress' : 'toma asistencia y revisa progreso',
+    selectAClass: uiLanguage === 'en' ? 'Select a class' : 'Selecciona una clase',
+    noLevel: uiLanguage === 'en' ? 'No level' : 'Sin nivel',
+    showProgress: uiLanguage === 'en' ? 'Show progress' : 'Ver progreso',
+    hideProgress: uiLanguage === 'en' ? 'Hide progress' : 'Ocultar progreso',
+    noStudentsInClass: uiLanguage === 'en' ? 'Selected class has no students assigned.' : 'La clase seleccionada no tiene alumnos asignados.',
+    confirmList: uiLanguage === 'en' ? 'Confirm list' : 'Confirmar lista',
+    changePassword: uiLanguage === 'en' ? 'Change password' : 'Cambiar contrasena',
+    updateIndividualAccess: uiLanguage === 'en' ? 'Update your individual access.' : 'Actualiza tu acceso individual.',
+    newPassword: uiLanguage === 'en' ? 'New password' : 'Nueva contrasena',
+    min6Chars: uiLanguage === 'en' ? 'Min 6 characters' : 'Minimo 6 caracteres',
+    savePassword: uiLanguage === 'en' ? 'Save password' : 'Guardar contrasena',
+    passwordUpdated: uiLanguage === 'en' ? 'Password updated.' : 'Contrasena actualizada.',
+    newPasswordMin6: uiLanguage === 'en' ? 'The new password must be at least 6 characters.' : 'La nueva contrasena debe tener minimo 6 caracteres.',
+    securityLogoutAgain: uiLanguage === 'en' ? 'For security, sign out, sign back in, and change the password again.' : 'Por seguridad, cierra sesion, vuelve a entrar y cambia la contrasena de nuevo.',
+    couldNotChangePassword: uiLanguage === 'en' ? 'Could not change the password.' : 'No se pudo cambiar la contrasena.',
+    attended: uiLanguage === 'en' ? 'Attended' : 'Asistio',
+    absent: uiLanguage === 'en' ? 'Absent' : 'Falto',
+    withNotice: uiLanguage === 'en' ? 'With notice' : 'Con aviso'
+  }
+
+  const getEffectiveClassStatus = (classItem) => {
+    if (classItem.status === 'cancelada') return uiText.canceled
+    const endAt = toDate(classItem.endAt)
+    return endAt && endAt < new Date() ? uiText.completed : uiText.scheduled
+  }
+
+  const getAttendanceStatusForClass = (classItem) => {
+    const studentIds = classItem?.studentIds || []
+    if (!studentIds.length) return uiText.noStudents
+    const recordedStudentIds = new Set(data.attendance.filter(record => record.classId === classItem.id).map(record => record.studentId))
+    return studentIds.every(studentId => recordedStudentIds.has(studentId))
+      ? uiText.captured
+      : `${recordedStudentIds.size}/${studentIds.length}`
+  }
+
   const {
     data,
     loading,
@@ -61,6 +136,9 @@ function TeacherDashboard() {
     createClassroom,
     createBulkAttendance
   } = useInstituteData()
+
+  const todayMexico = useMemo(() => getMexicoDateInput(), [])
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [selectedClassId, setSelectedClassId] = useState('')
   const [attendanceChecked, setAttendanceChecked] = useState({})
   const [progressStudentId, setProgressStudentId] = useState('')
@@ -68,17 +146,7 @@ function TeacherDashboard() {
   const [newPassword, setNewPassword] = useState('')
   const [passwordMessage, setPasswordMessage] = useState('')
   const [classViewMode, setClassViewMode] = useState('current')
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [hasAdminPanelAccess, setHasAdminPanelAccess] = useState(false)
-  const navigate = useNavigate()
-  const todayMexico = useMemo(() => getMexicoDateInput(), [])
-  const uiText = {
-    menu: uiLanguage === 'en' ? 'Menu' : 'Menu',
-    classes: uiLanguage === 'en' ? 'Classes' : 'Clases',
-    attendance: uiLanguage === 'en' ? 'Attendance' : 'Asistencia',
-    switchAdmin: uiLanguage === 'en' ? 'Switch to admin' : 'Cambiar a admin',
-    logout: uiLanguage === 'en' ? 'Log out' : 'Cerrar sesion'
-  }
 
   const requireLogin = !loading && (!user || !profile)
   const teacherByEmail = data.teachers.find(teacher => (
@@ -135,22 +203,22 @@ function TeacherDashboard() {
   const sortedLevels = useMemo(() => (
     [...data.levels].sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
   ), [data.levels])
-  const getAttendanceStatusForClass = (classItem) => {
-    const studentIds = classItem?.studentIds || []
-    if (!studentIds.length) return 'Sin alumnos'
-    const records = data.attendance.filter(record => record.classId === classItem.id)
-    const recordedStudentIds = new Set(records.map(record => record.studentId))
-    return studentIds.every(studentId => recordedStudentIds.has(studentId))
-      ? 'Capturada'
-      : `${recordedStudentIds.size}/${studentIds.length}`
-  }
+  const academicLevels = useMemo(() => (
+    sortedLevels.filter(level => !isFreeTopicLevelId(level.id))
+  ), [sortedLevels])
 
   useEffect(() => {
     if (loading || !profile) return
     const role = profile.rol || profile.role
-    if (role === 'admin' && (!isAdminTeacherView || !teacherByEmail)) navigate('/admin-dashboard/', { replace: true })
-    if (role === 'estudiante') navigate('/student-dashboard/', { replace: true })
+    const allowedAdminTeacherView = role === 'admin' && isAdminTeacherView && teacherByEmail
+    if (role !== 'teacher' && !allowedAdminTeacherView) {
+      signOut(auth).finally(() => navigate('/login', { replace: true }))
+    }
   }, [isAdminTeacherView, loading, navigate, profile, teacherByEmail])
+
+  const logout = () => {
+    signOut(auth).finally(() => navigate('/login', { replace: true }))
+  }
 
   useEffect(() => {
     const email = String(profile?.email || user?.email || '').toLowerCase()
@@ -265,7 +333,7 @@ function TeacherDashboard() {
       <div className="dashboard-body admin-system excel-system">
         <main className="dashboard-main">
           <section className="panel-card admin-card">
-            <h1>Cargando panel teacher</h1>
+            <h1>{uiText.loading}</h1>
           </section>
         </main>
       </div>
@@ -277,9 +345,9 @@ function TeacherDashboard() {
       <div className="dashboard-body admin-system excel-system">
         <main className="dashboard-main">
           <section className="panel-card admin-card">
-            <h1>Inicia sesion</h1>
+            <h1>{uiText.loginRequired}</h1>
             {authError && <p className="system-message">{authError}</p>}
-            <Link className="btn btn-primary" to="/login">Ir al login</Link>
+            <Link className="btn btn-primary" to="/login">{uiText.goToLogin}</Link>
           </section>
         </main>
       </div>
@@ -290,7 +358,7 @@ function TeacherDashboard() {
     <div className="dashboard-body admin-system excel-system">
       <div className="dashboard-shell">
         <aside className="sidebar admin-sidebar">
-          <BrandLogo panel="Teacher Panel" />
+          <BrandLogo panel={uiText.teacherPanel} />
           <button
             className="hamburger-menu-button"
             type="button"
@@ -298,27 +366,25 @@ function TeacherDashboard() {
             aria-expanded={isMobileMenuOpen}
             aria-controls="teacher-tabs-menu"
           >
-
             {uiText.menu}
           </button>
           <nav id="teacher-tabs-menu" className={isMobileMenuOpen ? 'sidebar-nav open' : 'sidebar-nav'}>
             <a className="active" href="#clases" onClick={() => setIsMobileMenuOpen(false)}>{uiText.classes}</a>
             <a href="#asistencia" onClick={() => setIsMobileMenuOpen(false)}>{uiText.attendance}</a>
-            <a href="#classrooms" onClick={() => setIsMobileMenuOpen(false)}>Classrooms</a>
           </nav>
           <div className="sidebar-card compact">
             <span className="kicker">Teacher</span>
             <strong>{profile?.nombre || profile?.email}</strong>
-            <small>{teacherProfile?.publicId || teacherId || 'Vista general'}</small>
+            <small>{teacherProfile?.publicId || teacherId || (uiLanguage === 'en' ? 'General view' : 'Vista general')}</small>
           </div>
         </aside>
 
         <main className="dashboard-main admin-main">
           <header className="dashboard-header admin-header">
             <div>
-              <span className="eyebrow">Operacion teacher</span>
-              <h1>Mis clases y alumnos</h1>
-              <p className="page-subtitle">Toma asistencia y revisa progreso de tus alumnos.</p>
+              <span className="eyebrow">{uiText.teacherOperation}</span>
+              <h1>{uiText.myClassesAndStudents}</h1>
+              <p className="page-subtitle">{uiText.takeAttendanceAndReview}</p>
             </div>
             <div className="header-actions">
               <SystemControls />
@@ -331,15 +397,15 @@ function TeacherDashboard() {
                   {uiText.switchAdmin}
                 </button>
               )}
-              <Link className="btn btn-secondary" to="/login">{uiText.logout}</Link>
+              <button className="btn btn-secondary" type="button" onClick={logout}>{uiText.logout}</button>
             </div>
           </header>
 
           <section id="clases" className="panel-card admin-card">
             <div className="admin-section-title">
               <div>
-                <h2>Clases asignadas</h2>
-                <p>{classViewMode === 'history' ? 'Historial de clases anteriores o listas ya capturadas.' : 'Clases de hoy o proximas pendientes de asistencia.'}</p>
+                <h2>{uiText.assignedClasses}</h2>
+                <p>{classViewMode === 'history' ? uiText.historyOrCaptured : uiText.todayOrUpcoming}</p>
               </div>
               <div className="teacher-class-toolbar">
                 <button
@@ -350,7 +416,7 @@ function TeacherDashboard() {
                     setSelectedClassId('')
                   }}
                 >
-                  Hoy / proximas ({teacherCurrentClasses.length})
+                  {uiText.todayUpcomingCount} ({teacherCurrentClasses.length})
                 </button>
                 <button
                   className={classViewMode === 'history' ? 'btn btn-primary small-btn' : 'btn btn-secondary small-btn'}
@@ -360,20 +426,20 @@ function TeacherDashboard() {
                     setSelectedClassId('')
                   }}
                 >
-                  Anteriores / capturadas ({teacherPreviousClasses.length})
+                  {uiText.previousCapturedCount} ({teacherPreviousClasses.length})
                 </button>
               </div>
             </div>
             <div className="excel-table teacher-class-table">
               <div className="excel-row excel-head">
-                <span>Fecha</span>
-                <span>Nivel</span>
-                <span>Leccion</span>
-                <span>Classroom</span>
-                <span>Alumnos</span>
-                <span>Horas</span>
-                <span>Lista</span>
-                <span>Estatus</span>
+                <span>{uiText.date}</span>
+                <span>{uiText.level}</span>
+                <span>{uiText.lesson}</span>
+                <span>{uiText.classroom}</span>
+                <span>{uiText.students}</span>
+                <span>{uiText.hours}</span>
+                <span>{uiText.list}</span>
+                <span>{uiText.status}</span>
               </div>
               {teacherClasses.map(classItem => {
                 const lesson = getLesson(classItem.lessonIds?.[0], data.lessons)
@@ -410,7 +476,7 @@ function TeacherDashboard() {
             <form className="attendance-form" onSubmit={submitAttendance}>
               <div className="attendance-check-grid">
                 {classStudents.map(student => {
-                  const takenLessonIds = getTakenLessonIds(student, data.classes, data.attendance)
+                  const takenLessonIds = getTakenLessonIds(student, data.classes, data.attendance, data.lessons)
                   const showProgress = progressStudentId === student.id
                   return (
                     <div className="student-attendance-row" key={student.id}>
@@ -426,7 +492,7 @@ function TeacherDashboard() {
                       </button>
                       {showProgress && (
                         <div className="student-progress-panel">
-                          {sortedLevels.map(level => (
+                          {academicLevels.map(level => (
                             <div className="lesson-progress-group" key={level.id}>
                               <strong>{level.shortName || level.name}</strong>
                               <div className="progress-lesson-grid">
@@ -450,32 +516,6 @@ function TeacherDashboard() {
             </form>
           </section>
 
-          <section id="classrooms" className="panel-card admin-card">
-            <div className="admin-section-title">
-              <div>
-                <h2>Classrooms</h2>
-                <p>Alta rapida de salones disponibles para operacion.</p>
-              </div>
-            </div>
-            <form className="admin-form-grid" onSubmit={submitClassroom}>
-              <label className="form-field span-2">
-                <span>Nombre</span>
-                <input value={classroomForm.name} onChange={event => setClassroomForm(prev => ({ ...prev, name: event.target.value }))} placeholder="Classroom 1" required />
-              </label>
-              <button className="btn btn-primary small-btn" type="submit" disabled={saving}>Agregar classroom</button>
-            </form>
-            <div className="stack-list section-gap">
-              {(data.classrooms || []).map(classroom => (
-                <div className="list-row" key={classroom.id}>
-                  <div>
-                    <strong>{classroom.name}</strong>
-                    <small>{classroom.active === false ? 'Inactivo' : 'Activo'}</small>
-                  </div>
-                </div>
-              ))}
-              {!data.classrooms?.length && <p className="empty-state">Aun no hay classrooms registrados.</p>}
-            </div>
-          </section>
 
           <section className="panel-card admin-card">
             <div className="admin-section-title">

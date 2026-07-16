@@ -22,6 +22,7 @@ import {
   deletePaymentRecord,
   deleteStudentRecord,
   deleteTeacherRecord,
+  dissolveClassToPendingReservationsRecord,
   EMPTY_INSTITUTE_DATA,
   initializeAcademicCatalog,
   initializeClassrooms,
@@ -102,10 +103,10 @@ export function useInstituteData() {
     if (!syncKey || syncKey === lastProgressSyncKey) return
     setLastProgressSyncKey(syncKey)
 
-    syncAttendanceProgressRecords(data.attendance, data.classes).catch(error => {
+    syncAttendanceProgressRecords(data.attendance, data.classes, data.students).catch(error => {
       console.warn('No se pudo sincronizar progreso desde asistencias.', error)
     })
-  }, [data.attendance, data.classes, lastProgressSyncKey, profile])
+  }, [data.attendance, data.classes, data.students, lastProgressSyncKey, profile])
 
   async function runWrite(action, successMessage) {
     try {
@@ -201,6 +202,13 @@ export function useInstituteData() {
     await runWrite(
       () => deleteClassRecord(classId),
       'Clase eliminada.'
+    )
+  }
+
+  async function dissolveClass(classId) {
+    await runWrite(
+      () => dissolveClassToPendingReservationsRecord(classId),
+      'Clase eliminada y reservas regresadas por asignar.'
     )
   }
 
@@ -415,6 +423,7 @@ export function useInstituteData() {
     createClass,
     updateClass,
     deleteClass,
+    dissolveClass,
     createBlockout,
     deleteBlockout,
     createClassroom,

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from 'firebase/auth'
+import { sendPasswordResetEmail, signInWithEmailAndPassword } from 'firebase/auth'
 import { doc, getDoc } from 'firebase/firestore'
 import BrandLogo from '../components/BrandLogo'
 import { auth, db } from '../firebase'
 import { dashboardPathForRole, formatLoginIdentifierInput, getLoginErrorMessage, resolveLoginRecord, writeAccessProfile } from '../services/loginAccess'
+import { useAuthProfile } from '../services/useAuthProfile'
 
 function Login() {
   const [loginId, setLoginId] = useState('')
@@ -13,12 +14,14 @@ function Login() {
   const [messageType, setMessageType] = useState('')
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
+  const { user, profile, loading: authLoading } = useAuthProfile()
 
   useEffect(() => {
-    if (auth.currentUser) {
-      signOut(auth).catch(error => console.warn('No se pudo limpiar sesion previa.', error))
+    const role = profile?.rol || profile?.role
+    if (!authLoading && user && role) {
+      navigate(dashboardPathForRole(role), { replace: true })
     }
-  }, [])
+  }, [authLoading, navigate, profile, user])
 
   const handleSubmit = async (event) => {
     event.preventDefault()
@@ -27,10 +30,6 @@ function Login() {
     setMessageType('')
 
     try {
-      if (auth.currentUser) {
-        await signOut(auth)
-      }
-
       const loginRecord = await resolveLoginRecord(loginId)
       const userCredential = await signInWithEmailAndPassword(auth, loginRecord.email, password)
       const user = userCredential.user
@@ -122,7 +121,8 @@ function Login() {
           <div className="auth-card">
             <div className="auth-card-header">
               <span className="eyebrow">Bienvenido a Innova-t</span>
-              <h2>Inicia sesion</h2>
+              <h2>Inicia sesión</h2>
+              <p>Solo para usuarios inscritos en Innova-T</p>
               <p>Ingresa con correo, ID de alumno o ID de teacher.</p>
             </div>
 

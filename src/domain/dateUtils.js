@@ -9,10 +9,10 @@ export function formatDate(value) {
   const date = toDate(value)
   if (!date || Number.isNaN(date.getTime())) return '-'
 
-  return new Intl.DateTimeFormat('es-MX', {
+  return new Intl.DateTimeFormat('en-US', {
+    month: '2-digit',
     day: '2-digit',
-    month: 'short',
-    year: 'numeric'
+    year: '2-digit'
   }).format(date)
 }
 
@@ -20,24 +20,25 @@ export function formatDateTime(value) {
   const date = toDate(value)
   if (!date || Number.isNaN(date.getTime())) return '-'
 
-  return new Intl.DateTimeFormat('es-MX', {
+  return new Intl.DateTimeFormat('en-US', {
+    month: '2-digit',
     day: '2-digit',
-    month: 'short',
+    year: '2-digit',
     hour12: true,
     hour: '2-digit',
     minute: '2-digit'
-  }).format(date).replace(/\s*a\.\s*m\./i, ' a.m.').replace(/\s*p\.\s*m\./i, ' p.m.')
+  }).format(date).replace(/\s*AM/i, ' a.m.').replace(/\s*PM/i, ' p.m.')
 }
 
 export function formatMexicoDate(value) {
   const date = toDate(value)
   if (!date || Number.isNaN(date.getTime())) return '-'
 
-  return new Intl.DateTimeFormat('es-MX', {
+  return new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/Mexico_City',
+    month: '2-digit',
     day: '2-digit',
-    month: 'short',
-    year: 'numeric'
+    year: '2-digit'
   }).format(date)
 }
 

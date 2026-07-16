@@ -41,11 +41,11 @@ function SystemControls() {
 
   return (
     <div className="system-controls" aria-label="Preferencias de interfaz">
-      <button className="btn btn-secondary small-btn" type="button" onClick={toggleLanguage}>
+      {/*<button className="btn btn-secondary small-btn" type="button" onClick={toggleLanguage}>
         {language === 'es' ? 'EN' : 'ES'}
-      </button>
+      </button> */}
       <button className="btn btn-secondary small-btn" type="button" onClick={toggleTheme}>
-        {theme === 'dark' ? 'Modo blanco' : 'Modo oscuro'}
+        {theme === 'dark' ? 'Modo luz' : 'Modo oscuro'}
       </button>
     </div>
   )
