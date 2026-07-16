@@ -205,18 +205,29 @@ function pickFreeTopicLesson(selectedStudents = [], lessons = [], attemptsByStud
     isFreeTopicLesson(lesson) || FREE_TOPIC_LESSON_IDS.includes(lesson.id)
   ))
 
+  const strictMatch = freeLessons
+    .map(lesson => {
+      const stats = getGroupLessonStats(lesson.id, selectedStudents, attemptsByStudent)
+      return { lesson, ...stats }
+    })
+    .filter(item => item.completedCount === 0 && !item.hasThirdRepeatRisk)
+    .sort((a, b) => Number(b.allUnseen) - Number(a.allUnseen)
+      || a.maxCount - b.maxCount
+      || a.totalCount - b.totalCount
+      || Number(a.lesson.order || 0) - Number(b.lesson.order || 0))[0]?.lesson
+
+  if (strictMatch) return strictMatch
+
   return freeLessons
     .map(lesson => {
       const stats = getGroupLessonStats(lesson.id, selectedStudents, attemptsByStudent)
       return { lesson, ...stats }
     })
     .filter(item => !item.hasThirdRepeatRisk)
-    .sort((a, b) => Number(b.allUnseen) - Number(a.allUnseen)
-      || a.completedCount - b.completedCount
+    .sort((a, b) => a.completedCount - b.completedCount
       || a.maxCount - b.maxCount
       || a.totalCount - b.totalCount
       || Number(a.lesson.order || 0) - Number(b.lesson.order || 0))[0]?.lesson
-    || freeLessons[0]
     || null
 }
 
@@ -287,7 +298,6 @@ Reglas reales:
 - Si el grupo mezcla niveles bastante diferenciados (2 o mas niveles de distancia), usa Tema Libre: FREE_TALKING_TIME, FREE_VOCABULARY o FREE_GAMES.
 - Puedes proponer varias clases para la misma fecha/hora si hay classrooms activos suficientes y eso mejora el acomodo.
 - Nunca propongas mas clases simultaneas que classrooms activos disponibles.
-- Si un alumno debe repetir una leccion para que el grupo funcione, se permite; tercera vez ya no.
 - Maximo 8 alumnos por clase.
 - No inventes IDs.
 - No escribas warnings sobre alumnos que no aparecen en Reservas pendientes.
@@ -298,12 +308,13 @@ Reglas reales:
 - Conserva solo studentIds que ya esten en cualquiera de las reservas sourceClassIds.
 - Preferencia: elegir lecciones que el alumno no ha tomado.
 - completedLessonIds / avoidLessonIds son lecciones que el alumno ya tiene marcadas como tomadas en su checklist. Evitalas antes que cualquier otra regla academica.
-- No repitas una leccion tomada por checklist si existe otra leccion viable para el grupo.
+- No sugieras una leccion normal si al menos un alumno del grupo ya la tiene en completedLessonIds / avoidLessonIds.
 - En cada alumno, lessonAttempts indica cuantas veces ya tiene tomada, marcada o programada una leccion.
-- Si un alumno no ha visto un tema y otro ya lo vio 1 vez, pueden tomarlo juntos.
 - Ningun alumno debe tomar una misma leccion por tercera vez.
-- Prioridad al elegir tema: 1) nadie lo ha tomado, 2) lo ha tomado la menor cantidad de alumnos, 3) menor total de repeticiones, 4) cercania de nivel.
-- Si no hay leccion viable, deja lessonId como "" y agrega warning.
+- Prioridad al elegir tema: 1) nadie del grupo lo tiene marcado, 2) cercania de nivel, 3) menor total de repeticiones.
+- Si hay diferencia academica grande, usa Tema Libre.
+- Si no hay leccion viable, usa Tema Libre. Si tampoco hay Tema Libre viable, deja lessonId como "".
+- Usa summary, reason y warnings muy cortos.
 
 Lecciones disponibles:
 ${JSON.stringify(payload.lessons, null, 2)}
@@ -382,9 +393,8 @@ function pickBestLessonForMixedGroup(selectedStudents = [], lessons = [], levels
           - averageLevelDistance
       }
     })
-    .filter(item => !item.hasThirdRepeatRisk)
+    .filter(item => item.completedCount === 0 && !item.hasThirdRepeatRisk)
     .sort((a, b) => Number(b.allUnseen) - Number(a.allUnseen)
-      || a.completedCount - b.completedCount
       || b.score - a.score
       || a.maxCount - b.maxCount
       || a.totalCount - b.totalCount
@@ -448,8 +458,8 @@ function buildLocalClassFormationSuggestions({ pendingClasses = [], students = [
         lessonId: lesson?.id || '',
         studentIds: chunk,
         reason: lesson?.id
-          ? `${date} ${time}: grupo mixto de ${chunk.length} alumno(s), ${level?.shortName || 'nivel flexible'}, tema ${lesson.name}; ${lessonStats?.allUnseen ? 'nadie lo tiene marcado como tomado' : `${lessonStats?.completedCount || 0} alumno(s) ya lo tomaron, es la opcion con menor repeticion`}; evita tercera repeticion.`
-          : `${date} ${time}: no hay tema viable sin tercera repeticion.`,
+          ? `${level?.shortName || 'Nivel flexible'} - tema no registrado.`
+          : `${date} ${time}: sin tema viable.`,
         confidence: lesson?.id ? Math.max(0.64, 0.84 - (chunkIndex * 0.04)) : 0.35
       }
     }).filter(Boolean)
@@ -461,12 +471,10 @@ function buildLocalClassFormationSuggestions({ pendingClasses = [], students = [
     sourceType: MISTRAL_ENABLED || AI_ENABLED ? 'fallback' : 'local',
     sourceLabel: MISTRAL_ENABLED || AI_ENABLED ? 'Deteccion local' : 'Reglas del sistema',
     fallbackReason,
-    summary: MISTRAL_ENABLED || AI_ENABLED
-      ? `Propuesta lista para revisar: se agruparon ${pendingClasses.length} reservas por horario en ${suggestions.length} clase(s).`
-      : `Propuesta lista para revisar: se agruparon ${pendingClasses.length} reservas por horario en ${suggestions.length} clase(s).`,
+    summary: `${suggestions.length} clase(s) sugeridas.`,
     suggestions,
     warnings: suggestions.some(item => !item.lessonId)
-      ? ['Hay grupos sin leccion viable. Revisa historial o separa alumnos manualmente.']
+      ? ['Hay grupos sin tema viable.']
       : []
   }
 }
@@ -498,46 +506,48 @@ function normalizeClassPlan(plan, pendingClasses = [], lessons = [], context = {
       return idMatches.every(id => allowedStudentIds.has(id) || allowedStudentPublicIds.has(id.toUpperCase()))
     })
 
+  const normalizedSuggestions = (Array.isArray(plan.suggestions) ? plan.suggestions : [])
+    .filter(item => pendingIds.has(item.classId))
+    .map(item => {
+      const sourceClassIds = (Array.isArray(item.sourceClassIds) && item.sourceClassIds.length ? item.sourceClassIds : [item.classId])
+        .filter(classId => pendingIds.has(classId))
+      const allowedStudents = new Set(sourceClassIds.flatMap(classId => pendingById.get(classId)?.studentIds || []))
+      const studentIds = (Array.isArray(item.studentIds) ? item.studentIds : [])
+        .filter(studentId => allowedStudents.has(studentId))
+        .slice(0, 8)
+      const selectedStudents = studentIds.map(studentId => studentsById.get(studentId)).filter(Boolean)
+      const suggestedLesson = getLesson(item.lessonId, lessons)
+      const groupDistance = getGroupLevelDistance(selectedStudents, context.levels || [])
+      const suggestedStats = suggestedLesson
+        ? getGroupLessonStats(suggestedLesson.id, selectedStudents, attemptsByStudent)
+        : null
+      const repeatsChecklistLesson = suggestedStats && suggestedStats.completedCount > 0
+      const thirdRepeatRisk = suggestedStats?.hasThirdRepeatRisk
+      const shouldUseFreeTopic = groupDistance >= 2 && !isFreeTopicLesson(suggestedLesson)
+      const recommendedLesson = selectedStudents.length
+        ? pickBestLessonForMixedGroup(selectedStudents, lessons, context.levels || [], attemptsByStudent)
+        : null
+      const shouldRepairLesson = (!suggestedLesson || repeatsChecklistLesson || thirdRepeatRisk || shouldUseFreeTopic) && recommendedLesson?.id
+      const lessonId = shouldRepairLesson ? recommendedLesson.id : lessonIds.has(item.lessonId) ? item.lessonId : ''
+      const repairReason = shouldRepairLesson && lessonId !== item.lessonId
+        ? 'Tema ajustado por progreso.'
+        : ''
+      return {
+        classId: item.classId,
+        sourceClassIds: sourceClassIds.length ? sourceClassIds : [item.classId],
+        lessonId,
+        studentIds,
+        reason: repairReason || String(item.reason || 'Sugerencia lista.').slice(0, 90),
+        confidence: Number(item.confidence || 0)
+      }
+    })
+    .filter(item => item.studentIds.length > 0)
+    .filter((item, index, list) => list.findIndex(candidate => candidate.classId === item.classId) === index)
+
   return {
-    summary: plan.summary || 'La IA genero una propuesta de acomodo.',
+    summary: normalizedSuggestions.length ? `${normalizedSuggestions.length} clase(s) sugeridas.` : 'Sin propuesta viable.',
     warnings: cleanWarnings,
-    suggestions: (Array.isArray(plan.suggestions) ? plan.suggestions : [])
-      .filter(item => pendingIds.has(item.classId))
-      .map(item => {
-        const sourceClassIds = (Array.isArray(item.sourceClassIds) && item.sourceClassIds.length ? item.sourceClassIds : [item.classId])
-          .filter(classId => pendingIds.has(classId))
-        const allowedStudents = new Set(sourceClassIds.flatMap(classId => pendingById.get(classId)?.studentIds || []))
-        const studentIds = (Array.isArray(item.studentIds) ? item.studentIds : [])
-          .filter(studentId => allowedStudents.has(studentId))
-          .slice(0, 8)
-        const selectedStudents = studentIds.map(studentId => studentsById.get(studentId)).filter(Boolean)
-        const suggestedLesson = getLesson(item.lessonId, lessons)
-        const groupDistance = getGroupLevelDistance(selectedStudents, context.levels || [])
-        const suggestedStats = suggestedLesson
-          ? getGroupLessonStats(suggestedLesson.id, selectedStudents, attemptsByStudent)
-          : null
-        const repeatsExistingLesson = suggestedStats && (suggestedStats.totalCount > 0 || suggestedStats.completedCount > 0)
-        const thirdRepeatRisk = suggestedStats?.hasThirdRepeatRisk
-        const shouldUseFreeTopic = groupDistance >= 2 && !isFreeTopicLesson(suggestedLesson)
-        const recommendedLesson = selectedStudents.length
-          ? pickBestLessonForMixedGroup(selectedStudents, lessons, context.levels || [], attemptsByStudent)
-          : null
-        const shouldRepairLesson = (!suggestedLesson || repeatsExistingLesson || thirdRepeatRisk || shouldUseFreeTopic) && recommendedLesson?.id
-        const lessonId = shouldRepairLesson ? recommendedLesson.id : lessonIds.has(item.lessonId) ? item.lessonId : ''
-        const repairReason = shouldRepairLesson && lessonId !== item.lessonId
-          ? ` Ajuste automatico: ${recommendedLesson.name} evita tema ya tomado por checklist, repeticion excesiva o usa Tema Libre para niveles distintos.`
-          : ''
-        return {
-          classId: item.classId,
-          sourceClassIds: sourceClassIds.length ? sourceClassIds : [item.classId],
-          lessonId,
-          studentIds,
-          reason: `${item.reason || 'Sugerencia de IA.'}${repairReason}`,
-          confidence: Number(item.confidence || 0)
-        }
-      })
-      .filter(item => item.studentIds.length > 0)
-      .filter((item, index, list) => list.findIndex(candidate => candidate.classId === item.classId) === index)
+    suggestions: normalizedSuggestions
   }
 }
 

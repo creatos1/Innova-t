@@ -60,6 +60,12 @@ Despues abre la URL que aparece en la terminal, normalmente:
 http://127.0.0.1:5173
 ```
 
+Para probar IA con las mismas rutas que Vercel:
+
+```powershell
+npm run dev:vercel
+```
+
 ## Crear version para produccion
 
 ```powershell
@@ -68,14 +74,35 @@ npm run build
 
 ## Configuracion necesaria
 
-Crea un archivo `.env` usando `.env.example` como guia.
+Crea un archivo `.env.local` usando `.env.example` como guia.
 
-Debes configurar:
+Para Vercel, agrega las mismas variables en:
 
-- Datos del proyecto Firebase.
-- Dominio autorizado en Firebase Authentication.
-- Reglas de Firestore publicadas.
-- Llave de IA en Vercel si se usara la sugerencia automatica de clases.
+```text
+Vercel > Project > Settings > Environment Variables
+```
+
+Variables publicas del frontend:
+
+- `VITE_FIREBASE_API_KEY`
+- `VITE_FIREBASE_AUTH_DOMAIN`
+- `VITE_FIREBASE_PROJECT_ID`
+- `VITE_FIREBASE_STORAGE_BUCKET`
+- `VITE_FIREBASE_MESSAGING_SENDER_ID`
+- `VITE_FIREBASE_APP_ID`
+- `VITE_FIREBASE_MEASUREMENT_ID`
+- `VITE_ENABLE_MISTRAL_AI=true`
+- `VITE_MISTRAL_PROXY_URL=/api/mistral-class-plan`
+- `VITE_MISTRAL_MONTHLY_LIMIT=1000`
+
+Variables privadas del servidor:
+
+- `MISTRAL_API_KEY`
+- `MISTRAL_MODEL=mistral-small-latest`
+- `MISTRAL_API_URL=https://api.mistral.ai/v1/chat/completions`
+- `FIREBASE_SERVICE_ACCOUNT_JSON`
+
+No subas `.env`, `.env.local` ni `serviceAccountKey.json` a GitHub.
 
 ## Publicar reglas de Firestore
 
@@ -131,11 +158,35 @@ npm run procesar-borrados-auth
 2. Crear proyecto en Vercel.
 3. Usar:
    - Framework: Vite
+   - Install Command: `npm install`
    - Build Command: `npm run build`
    - Output Directory: `dist`
-4. Agregar las variables de entorno.
-5. Agregar el dominio de Vercel en Firebase Authentication.
-6. Publicar reglas de Firestore.
+4. Agregar las variables de entorno en Vercel.
+5. Hacer deploy.
+6. Agregar el dominio de Vercel en Firebase Authentication.
+7. Publicar reglas de Firestore.
+
+## IA con Mistral
+
+El sistema intenta usar Mistral primero para sugerir clases.
+
+Para verificarlo:
+
+```text
+https://tu-dominio.vercel.app/api/mistral-class-plan
+```
+
+Debe responder algo como:
+
+```json
+{
+  "ok": true,
+  "configured": true,
+  "model": "mistral-small-latest"
+}
+```
+
+Si `configured` sale `false`, falta `MISTRAL_API_KEY` en Vercel.
 
 ## Comandos rapidos
 

@@ -350,8 +350,13 @@ function getStudentGroupLevelDistance(studentIds = [], students = [], levels = [
 
 function findDefaultLessonForStudentGroup(studentIds = [], students = [], lessons = [], levels = []) {
   const studentsById = new Map(students.map(student => [student.id, student]))
+  const selectedStudents = studentIds.map(studentId => studentsById.get(studentId)).filter(Boolean)
+  const isCleanForGroup = lesson => (
+    lesson
+    && selectedStudents.every(student => !(student.completedLessonIds || []).includes(lesson.id))
+  )
   const levelDistance = getStudentGroupLevelDistance(studentIds, students, levels)
-  const freeTopicLesson = lessons.find(lesson => isFreeTopicLevelId(lesson.levelId))
+  const freeTopicLesson = lessons.find(lesson => isFreeTopicLevelId(lesson.levelId) && isCleanForGroup(lesson))
 
   if (levelDistance >= 2 && freeTopicLesson) return freeTopicLesson.id
 
@@ -364,11 +369,12 @@ function findDefaultLessonForStudentGroup(studentIds = [], students = [], lesson
     .sort((a, b) => b[1] - a[1] || Number(getLevel(a[0], levels)?.order ?? 999) - Number(getLevel(b[0], levels)?.order ?? 999))[0]?.[0]
   const currentLessonId = studentIds
     .map(studentId => studentsById.get(studentId)?.currentLessonId)
-    .find(Boolean)
+    .find(lessonId => isCleanForGroup(lessons.find(lesson => lesson.id === lessonId)))
 
-  return lessons.find(lesson => lesson.id === currentLessonId && !isFreeTopicLevelId(lesson.levelId))?.id
-    || lessons.find(lesson => getCanonicalLevelId(lesson.levelId) === preferredLevelId && !isFreeTopicLevelId(lesson.levelId))?.id
-    || lessons.find(lesson => !isFreeTopicLevelId(lesson.levelId))?.id
+  return lessons.find(lesson => lesson.id === currentLessonId && !isFreeTopicLevelId(lesson.levelId) && isCleanForGroup(lesson))?.id
+    || lessons.find(lesson => getCanonicalLevelId(lesson.levelId) === preferredLevelId && !isFreeTopicLevelId(lesson.levelId) && isCleanForGroup(lesson))?.id
+    || lessons.find(lesson => !isFreeTopicLevelId(lesson.levelId) && isCleanForGroup(lesson))?.id
+    || freeTopicLesson?.id
     || ''
 }
 
@@ -387,7 +393,7 @@ function getPlanSourceMeta(plan) {
     return {
       severity: 'ok',
       label: 'Resultado de IA',
-      detail: plan?.model ? `La propuesta fue generada por el asistente academico (${plan.model}).` : 'La propuesta fue generada por el asistente academico.'
+      detail: plan?.model ? `IA: ${plan.model}` : 'IA'
     }
   }
 
@@ -395,7 +401,7 @@ function getPlanSourceMeta(plan) {
     return {
       severity: 'info',
       label: 'Manual',
-      detail: 'El admin esta formando la clase directamente.'
+      detail: 'Modo manual.'
     }
   }
 
@@ -403,16 +409,14 @@ function getPlanSourceMeta(plan) {
     return {
       severity: 'warning',
       label: 'Deteccion local',
-      detail: plan?.fallbackReason
-        ? `El asistente no respondio. Se uso acomodo automatico del sistema: ${plan.fallbackReason}`
-        : 'El asistente no respondio. Se uso acomodo automatico del sistema.'
+      detail: 'IA no respondio. Se uso deteccion local.'
     }
   }
 
   return {
     severity: 'info',
     label: 'Reglas del sistema',
-    detail: 'La propuesta fue calculada con las reglas academicas guardadas en el sistema.'
+    detail: 'Reglas locales.'
   }
 }
 
@@ -1526,6 +1530,17 @@ function AdminDashboard() {
     }
 
     for (const draft of drafts) {
+      const repeatedProgressStudentId = draft.studentIds.find(studentId => (
+        getRegisteredLessonIdsForStudent(studentId, data.classes, data.attendance, sortedStudents).has(draft.lessonId)
+      ))
+
+      if (repeatedProgressStudentId) {
+        const student = sortedStudents.find(item => item.id === repeatedProgressStudentId)
+        const lesson = getLesson(draft.lessonId, data.lessons)
+        setMessage(`${student?.publicId || 'Alumno'} ya tiene registrado ${lesson?.name || 'este tema'}. Cambia el tema.`)
+        return
+      }
+
       const sourceClassIds = getSourceClassIdsForStudentIds(aiPlanGroup, draft.studentIds)
       const conflictClass = findStudentLessonClassConflict({
         studentIds: draft.studentIds,
@@ -1579,6 +1594,17 @@ function AdminDashboard() {
     }
     if (classStudentIds.length > 8) {
       setMessage('Maximo 8 estudiantes por clase.')
+      return
+    }
+
+    const repeatedProgressStudentId = classStudentIds.find(studentId => (
+      getRegisteredLessonIdsForStudent(studentId, data.classes, data.attendance, sortedStudents).has(classForm.lessonId)
+    ))
+
+    if (repeatedProgressStudentId) {
+      const student = sortedStudents.find(item => item.id === repeatedProgressStudentId)
+      const lesson = getLesson(classForm.lessonId, data.lessons)
+      setMessage(`${student?.publicId || 'Alumno'} ya tiene registrado ${lesson?.name || 'este tema'}. Cambia el tema.`)
       return
     }
 
