@@ -1560,6 +1560,19 @@ function AdminDashboard() {
   }
 
   const submitAiPlanClasses = async () => {
+    const groupStudents = aiPlanGroup.students?.length
+      ? aiPlanGroup.students
+      : aiPlanGroup.studentIds.map(studentId => sortedStudents.find(student => student.id === studentId)).filter(Boolean)
+    
+    const totalStudents = groupStudents.length
+    const selectedStudents = new Set(aiPlanDrafts.flatMap(draft => draft.studentIds))
+    const selectedCount = selectedStudents.size
+    
+    if (selectedCount !== totalStudents) {
+      setMessage(`Faltan ${totalStudents - selectedCount} alumno(s) por seleccionar. Todos deben estar en una clase.`)
+      return
+    }
+    
     const drafts = aiPlanDrafts.filter(draft => draft.studentIds.length)
     if (!drafts.length) {
       setMessage('La propuesta no tiene alumnos seleccionados.')
@@ -2828,6 +2841,10 @@ function AdminDashboard() {
     const groupStudents = aiPlanGroup.students?.length
       ? aiPlanGroup.students
       : aiPlanGroup.studentIds.map(studentId => sortedStudents.find(student => student.id === studentId)).filter(Boolean)
+    const totalStudents = groupStudents.length
+    const selectedStudents = new Set(aiPlanDrafts.flatMap(draft => draft.studentIds))
+    const selectedCount = selectedStudents.size
+    const allStudentsSelected = selectedCount === totalStudents
     const isManualFormation = aiClassPlan?.provider === 'admin-manual'
     const sourceMeta = getPlanSourceMeta(aiClassPlan)
 
@@ -2959,9 +2976,19 @@ function AdminDashboard() {
           </div>
 
           <div className="row-actions form-wide-actions">
-            <button className="btn btn-primary" type="button" onClick={submitAiPlanClasses} disabled={saving}>
-              Guardar clases formadas
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <div>
+                <strong>{selectedCount}/{totalStudents}</strong> alumnos seleccionados
+                {!allStudentsSelected && (
+                  <span style={{ color: '#dc2626', marginLeft: '8px' }}>
+                    • Faltan {totalStudents - selectedCount}
+                  </span>
+                )}
+              </div>
+              <button className="btn btn-primary" type="button" onClick={submitAiPlanClasses} disabled={saving || !allStudentsSelected}>
+                Guardar clases formadas
+              </button>
+            </div>
             <button className="btn btn-secondary" type="button" onClick={requestCloseAiPlanModal}>
               {aiPlanCloseConfirm ? 'Cerrar sin guardar' : 'Cancelar'}
             </button>
