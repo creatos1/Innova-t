@@ -796,12 +796,16 @@ p {
 
 .dashboard-body {
   background: linear-gradient(180deg, #f7f1e8, #efe0cf);
+  width: 100%;
+  overflow-x: hidden;
 }
 
 .dashboard-shell {
   min-height: 100vh;
   display: grid;
   grid-template-columns: 280px 1fr;
+  width: 100%;
+  min-width: 0;
 }
 
 .sidebar {
@@ -836,6 +840,8 @@ p {
 
 .dashboard-main {
   padding: 34px;
+  width: 100%;
+  min-width: 0;
 }
 
 .dashboard-main > section + section {
@@ -1505,6 +1511,8 @@ p {
 
 .admin-main {
   padding: 28px;
+  width: 100%;
+  min-width: 0;
 }
 
 .admin-header {
@@ -1549,6 +1557,7 @@ p {
   border: 1px solid #d9dee7;
   border-radius: 10px;
   box-shadow: none;
+  min-width: 0;
 }
 
 .admin-metrics {
@@ -1681,7 +1690,7 @@ p {
 
 .teacher-row {
   display: grid;
-  grid-template-columns: 90px minmax(140px, 1fr) minmax(180px, 1fr) auto auto;
+  grid-template-columns: minmax(90px, 0.8fr) minmax(140px, 1fr) minmax(180px, 1.2fr) minmax(110px, 0.7fr) auto auto;
   gap: 8px;
   align-items: center;
 }
@@ -1779,6 +1788,10 @@ p {
   gap: 10px;
 }
 
+.attendance-form .attendance-check-grid {
+  grid-template-columns: 1fr;
+}
+
 .compact-check-grid {
   max-height: 360px;
   overflow: auto;
@@ -1842,6 +1855,7 @@ p {
   padding: 8px;
   border: 1px solid #c9d3de;
   background: #f8fafc;
+  min-width: 0;
 }
 
 .student-attendance-row .attendance-check {
@@ -1849,6 +1863,7 @@ p {
   border: 0;
   padding: 0;
   background: transparent;
+  min-width: 0;
 }
 
 .student-progress-panel {
@@ -1926,6 +1941,117 @@ p {
   border-color: #d9dee7;
 }
 
+.table-mini-status {
+  align-self: center;
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #c7d4df;
+  background: #edf7f8;
+  color: #194f5a;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 0.35rem 0.55rem;
+}
+
+.system-controls {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.hamburger-menu-button {
+  display: none;
+  width: 100%;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  border: 1px solid #c9d3de;
+  background: #ffffff;
+  color: #253041;
+  font-weight: 800;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.hamburger-menu-button span {
+  display: block;
+  width: 18px;
+  height: 2px;
+  background: currentColor;
+}
+
+html[data-theme='dark'] .dashboard-body,
+html[data-theme='dark'] .excel-system {
+  background: #101820;
+  color: #edf2f7;
+}
+
+html[data-theme='dark'] .sidebar,
+html[data-theme='dark'] .admin-sidebar,
+html[data-theme='dark'] .panel-card,
+html[data-theme='dark'] .admin-card,
+html[data-theme='dark'] .metric-card,
+html[data-theme='dark'] .sidebar-card,
+html[data-theme='dark'] .auth-card {
+  background: #17212b;
+  border-color: #314253;
+  color: #edf2f7;
+}
+
+html[data-theme='dark'] .admin-system h1,
+html[data-theme='dark'] .admin-system h2,
+html[data-theme='dark'] .admin-system h3,
+html[data-theme='dark'] .admin-system p,
+html[data-theme='dark'] .page-subtitle,
+html[data-theme='dark'] .compact-facts dt,
+html[data-theme='dark'] .compact-facts dd,
+html[data-theme='dark'] .form-field span,
+html[data-theme='dark'] .sidebar-card small,
+html[data-theme='dark'] .list-row small,
+html[data-theme='dark'] .record-button span,
+html[data-theme='dark'] .excel-row > span {
+  color: #edf2f7;
+}
+
+html[data-theme='dark'] input,
+html[data-theme='dark'] select,
+html[data-theme='dark'] textarea,
+html[data-theme='dark'] .excel-row,
+html[data-theme='dark'] .teacher-row,
+html[data-theme='dark'] .record-button,
+html[data-theme='dark'] .list-row,
+html[data-theme='dark'] .student-attendance-row,
+html[data-theme='dark'] .lesson-history-row {
+  background: #0f1720;
+  border-color: #314253;
+  color: #edf2f7;
+}
+
+html[data-theme='dark'] .excel-head,
+html[data-theme='dark'] .table-head {
+  background: #263645;
+  color: #edf2f7;
+}
+
+html[data-theme='dark'] .admin-tabs-nav button,
+html[data-theme='dark'] .sidebar-nav a,
+html[data-theme='dark'] .hamburger-menu-button {
+  background: #0f1720;
+  border-color: #314253;
+  color: #edf2f7;
+}
+
+html[data-theme='dark'] .admin-tabs-nav button.active,
+html[data-theme='dark'] .admin-tabs-nav button:hover,
+html[data-theme='dark'] .sidebar-nav a.active,
+html[data-theme='dark'] .sidebar-nav a:hover {
+  background: #21485a;
+  color: #ffffff;
+}
+
 .admin-system .table-head {
   background: #f2f5f9;
   color: #475467;
@@ -1958,10 +2084,13 @@ p {
 .excel-system {
   background: #eef2f5;
   font-size: 14px;
+  width: 100%;
+  overflow-x: hidden;
 }
 
 .excel-system .dashboard-main {
   padding: 18px;
+  min-width: 0;
 }
 
 .excel-system .panel-card,
@@ -2068,6 +2197,9 @@ p {
   display: grid;
   border: 1px solid #9fb5c9;
   background: #ffffff;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .excel-row {
@@ -2078,7 +2210,26 @@ p {
 }
 
 .teacher-class-table .excel-row {
-  grid-template-columns: 150px 110px minmax(180px, 1fr) minmax(140px, 0.8fr) 80px 70px 120px;
+  grid-template-columns: 150px 100px minmax(180px, 1fr) minmax(130px, 0.75fr) 70px 60px 110px 110px;
+  min-width: 900px;
+}
+
+.teacher-class-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.teacher-class-toolbar .btn {
+  border-radius: 6px;
+}
+
+.teacher-empty-state {
+  padding: 14px;
+  margin: 0;
+  border-bottom: 1px solid #c9d3de;
 }
 
 .excel-row > span {
@@ -2477,7 +2628,7 @@ p {
 
 @media (max-width: 1180px) {
   .excel-system .dashboard-shell {
-    grid-template-columns: 220px minmax(0, 1fr);
+    grid-template-columns: 200px minmax(0, 1fr);
   }
 
   .dashboard-main .top-grid,
@@ -2494,7 +2645,91 @@ p {
   }
 }
 
+@media (max-width: 760px) {
+  .teacher-class-table {
+    display: grid;
+    gap: 10px;
+    border: 0;
+    background: transparent;
+    overflow: visible;
+  }
+
+  .teacher-class-table .excel-head {
+    display: none;
+  }
+
+  .teacher-class-table .excel-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    min-width: 0;
+    gap: 0;
+    border: 1px solid #c9d3de;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #ffffff;
+  }
+
+  .teacher-class-table .excel-row > span {
+    display: grid;
+    grid-template-columns: 98px minmax(0, 1fr);
+    gap: 8px;
+    min-height: 0;
+    padding: 9px 10px;
+    border-right: 0;
+    border-bottom: 1px solid #e4e9f0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .teacher-class-table .excel-row > span::before {
+    content: attr(data-label);
+    color: #475467;
+    font-weight: 800;
+  }
+
+  .teacher-class-table .excel-button.active {
+    border-color: #2f6f75;
+    background: #eef8f2;
+  }
+
+  .attendance-form .attendance-check-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .student-attendance-row {
+    grid-template-columns: 1fr;
+  }
+
+  .student-attendance-row .btn {
+    width: 100%;
+  }
+}
+
 @media (max-width: 900px) {
+  .hamburger-menu-button {
+    display: inline-flex;
+  }
+
+  .excel-system .sidebar-nav,
+  .excel-system .admin-tabs-nav {
+    display: none;
+  }
+
+  .excel-system .sidebar-nav.open,
+  .excel-system .admin-tabs-nav.open {
+    display: grid;
+  }
+
+  .system-controls,
+  .header-actions {
+    width: 100%;
+  }
+
+  .system-controls .btn,
+  .header-actions .btn {
+    flex: 1 1 auto;
+  }
+
   .auth-layout {
     grid-template-columns: 1fr;
   }
@@ -2530,8 +2765,8 @@ p {
     display: none;
   }
 
-  .excel-system .sidebar-nav,
-  .excel-system .admin-tabs-nav {
+  .excel-system .sidebar-nav.open,
+  .excel-system .admin-tabs-nav.open {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
@@ -2613,6 +2848,61 @@ p {
   }
 }
 
+@media (max-width: 760px) {
+  .teacher-class-table {
+    display: grid;
+    gap: 10px;
+    border: 0;
+    background: transparent;
+    overflow: visible;
+  }
+
+  .teacher-class-table .excel-head {
+    display: none;
+  }
+
+  .teacher-class-table .excel-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    min-width: 0;
+    gap: 0;
+    border: 1px solid #c9d3de;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #ffffff;
+  }
+
+  .teacher-class-table .excel-row > span {
+    display: grid;
+    grid-template-columns: 98px minmax(0, 1fr);
+    gap: 8px;
+    min-height: 0;
+    padding: 9px 10px;
+    border-right: 0;
+    border-bottom: 1px solid #e4e9f0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .teacher-class-table .excel-row > span::before {
+    content: attr(data-label);
+    color: #475467;
+    font-weight: 800;
+  }
+
+  .attendance-form .attendance-check-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .student-attendance-row {
+    grid-template-columns: 1fr;
+  }
+
+  .student-attendance-row .btn {
+    width: 100%;
+  }
+}
+
 @media (max-width: 560px) {
   .container {
     width: min(100% - 24px, 1120px);
@@ -2681,7 +2971,412 @@ p {
     grid-template-columns: 1fr;
   }
 
+  .teacher-class-table {
+    display: grid;
+    gap: 10px;
+    border: 0;
+    background: transparent;
+  }
+
+  .teacher-class-table .excel-head {
+    display: none;
+  }
+
+  .teacher-class-toolbar {
+    justify-content: stretch;
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .teacher-class-toolbar .btn {
+    width: 100%;
+  }
+
+  .teacher-class-table .excel-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    min-width: 0;
+    gap: 0;
+    border: 1px solid #c9d3de;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #ffffff;
+  }
+
+  .teacher-class-table .excel-row > span {
+    display: grid;
+    grid-template-columns: 92px minmax(0, 1fr);
+    gap: 8px;
+    min-height: 0;
+    padding: 8px 10px;
+    border-right: 0;
+    border-bottom: 1px solid #e4e9f0;
+    white-space: normal;
+  }
+
+  .teacher-class-table .excel-row > span::before {
+    content: attr(data-label);
+    color: #475467;
+    font-weight: 800;
+  }
+
+  .teacher-class-table .excel-button.active {
+    border-color: #2f6f75;
+    background: #eef8f2;
+  }
+
   .system-message {
     font-size: 0.86rem;
   }
+}
+
+.landing-system .system-preview-card img {
+  display: block;
+  width: 100%;
+  min-height: 320px;
+  object-fit: cover;
+}
+
+.landing-system .feature-card,
+.landing-system .system-timeline article,
+.landing-system .hero-stats article {
+  border-radius: 10px;
+  border-color: rgba(83, 63, 43, 0.14);
+}
+
+.landing-system .feature-card,
+.landing-system .system-timeline article {
+  padding: 22px;
+}
+
+.landing-system .section-heading {
+  max-width: 760px;
+  margin-bottom: 24px;
+}
+
+.landing-system .contact-grid {
+  align-items: start;
+}
+
+.landing-system .contact-title {
+  margin-top: 8px;
+}
+
+@media (max-width: 980px) {
+  .landing-system .system-hero-grid,
+  .landing-system .methodology-grid,
+  .landing-system .contact-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .landing-system .system-preview-card img {
+    min-height: 240px;
+    max-height: 420px;
+  }
+}
+
+@media (max-width: 860px) {
+  .landing-system .hamburger-btn {
+    display: flex;
+  }
+
+  .landing-system .main-nav {
+    position: fixed;
+    top: 72px;
+    right: 14px;
+    left: 14px;
+    width: auto;
+    max-width: none;
+    height: auto;
+    display: none;
+    align-items: stretch;
+    justify-content: start;
+    padding: 18px;
+    border: 1px solid rgba(94, 64, 51, 0.12);
+    border-radius: 12px;
+    background: #fffaf4;
+    box-shadow: 0 20px 60px rgba(43, 29, 23, 0.18);
+  }
+
+  .landing-system .main-nav.open {
+    display: flex;
+    right: 14px;
+  }
+
+  .landing-system .main-nav a {
+    width: 100%;
+    text-align: left;
+  }
+}
+
+@media (max-width: 640px) {
+  .landing-system .hero-section {
+    padding-top: 42px;
+  }
+
+  .landing-system .hero-actions,
+  .landing-system .hero-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .landing-system .hero-actions {
+    display: grid;
+  }
+
+  .landing-system .hero-actions .btn {
+    width: 100%;
+  }
+}
+
+/* Final dark-mode layer: placed last so the Excel/admin rules cannot wash it out. */
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --dark-bg: #0b1118;
+  --dark-sidebar: #111a24;
+  --dark-card: #162231;
+  --dark-card-soft: #1d2b3a;
+  --dark-line: #33465a;
+  --dark-line-soft: #263849;
+  --dark-text: #f1f6fb;
+  --dark-muted: #b7c6d6;
+  --dark-accent: #6bb7ff;
+  --dark-success: #4ade80;
+  --dark-warning: #facc15;
+  --dark-danger: #fb7185;
+}
+
+html[data-theme='dark'] .auth-body,
+html[data-theme='dark'] .dashboard-body,
+html[data-theme='dark'] .excel-system,
+html[data-theme='dark'] .showtime-screen {
+  background: var(--dark-bg) !important;
+  color: var(--dark-text) !important;
+}
+
+html[data-theme='dark'] .sidebar,
+html[data-theme='dark'] .admin-sidebar {
+  background: var(--dark-sidebar) !important;
+  border-color: var(--dark-line) !important;
+}
+
+html[data-theme='dark'] .panel-card,
+html[data-theme='dark'] .admin-card,
+html[data-theme='dark'] .metric-card,
+html[data-theme='dark'] .sidebar-card,
+html[data-theme='dark'] .auth-card,
+html[data-theme='dark'] .preview-item,
+html[data-theme='dark'] .quick-card,
+html[data-theme='dark'] .modal-card,
+html[data-theme='dark'] .action-message-modal,
+html[data-theme='dark'] .payment-capture-modal,
+html[data-theme='dark'] .ai-plan-modal,
+html[data-theme='dark'] .showtime-table-card {
+  background: var(--dark-card) !important;
+  border-color: var(--dark-line) !important;
+  box-shadow: none !important;
+  color: var(--dark-text) !important;
+}
+
+html[data-theme='dark'] .metric-card strong,
+html[data-theme='dark'] .metric-card span,
+html[data-theme='dark'] .metric-card small,
+html[data-theme='dark'] .admin-system h1,
+html[data-theme='dark'] .admin-system h2,
+html[data-theme='dark'] .admin-system h3,
+html[data-theme='dark'] .admin-system p,
+html[data-theme='dark'] .page-subtitle,
+html[data-theme='dark'] .auth-card h1,
+html[data-theme='dark'] .auth-card h2,
+html[data-theme='dark'] .auth-card p,
+html[data-theme='dark'] .auth-card label,
+html[data-theme='dark'] .sidebar strong,
+html[data-theme='dark'] .sidebar small,
+html[data-theme='dark'] .compact-facts dt,
+html[data-theme='dark'] .compact-facts dd,
+html[data-theme='dark'] .form-field,
+html[data-theme='dark'] .form-field span,
+html[data-theme='dark'] .empty-state,
+html[data-theme='dark'] .list-row strong,
+html[data-theme='dark'] .list-row small,
+html[data-theme='dark'] .record-button strong,
+html[data-theme='dark'] .record-button span,
+html[data-theme='dark'] .teacher-row,
+html[data-theme='dark'] .student-attendance-row,
+html[data-theme='dark'] .lesson-history-row,
+html[data-theme='dark'] .lesson-check-row,
+html[data-theme='dark'] .table-mini-status {
+  color: var(--dark-text) !important;
+}
+
+html[data-theme='dark'] .eyebrow,
+html[data-theme='dark'] .kicker,
+html[data-theme='dark'] .admin-system .metric-card span,
+html[data-theme='dark'] .compact-facts dt,
+html[data-theme='dark'] .excel-grid-table th,
+html[data-theme='dark'] .table-head {
+  color: var(--dark-accent) !important;
+}
+
+html[data-theme='dark'] .compact-facts div,
+html[data-theme='dark'] .ai-usage-facts div,
+html[data-theme='dark'] .rule-item,
+html[data-theme='dark'] .student-card,
+html[data-theme='dark'] .recommendation-card,
+html[data-theme='dark'] .highlight-panel,
+html[data-theme='dark'] .list-row,
+html[data-theme='dark'] .record-button,
+html[data-theme='dark'] .teacher-row,
+html[data-theme='dark'] .catalog-row,
+html[data-theme='dark'] .student-attendance-row,
+html[data-theme='dark'] .student-progress-panel,
+html[data-theme='dark'] .lesson-history-group,
+html[data-theme='dark'] .lesson-history-row,
+html[data-theme='dark'] .lesson-check-row,
+html[data-theme='dark'] details,
+html[data-theme='dark'] summary,
+html[data-theme='dark'] .system-message {
+  background: var(--dark-card-soft) !important;
+  border-color: var(--dark-line) !important;
+  color: var(--dark-text) !important;
+}
+
+html[data-theme='dark'] input,
+html[data-theme='dark'] select,
+html[data-theme='dark'] textarea,
+html[data-theme='dark'] option {
+  background: #0f1822 !important;
+  border-color: var(--dark-line) !important;
+  color: var(--dark-text) !important;
+}
+
+html[data-theme='dark'] input::placeholder,
+html[data-theme='dark'] textarea::placeholder {
+  color: #8193a8 !important;
+}
+
+html[data-theme='dark'] .excel-grid-table,
+html[data-theme='dark'] .excel-table,
+html[data-theme='dark'] .data-table {
+  background: var(--dark-card) !important;
+  border-color: var(--dark-line) !important;
+}
+
+html[data-theme='dark'] .excel-grid-table th,
+html[data-theme='dark'] .excel-head,
+html[data-theme='dark'] .table-head {
+  background: #203142 !important;
+  border-color: var(--dark-line) !important;
+}
+
+html[data-theme='dark'] .excel-grid-table td,
+html[data-theme='dark'] .excel-row,
+html[data-theme='dark'] .excel-row > span,
+html[data-theme='dark'] .excel-grid-table tr:nth-child(even) td {
+  background: #121d29 !important;
+  border-color: var(--dark-line-soft) !important;
+  color: var(--dark-text) !important;
+}
+
+html[data-theme='dark'] .excel-button:hover,
+html[data-theme='dark'] .excel-button.active,
+html[data-theme='dark'] .record-button.active {
+  background: #21445a !important;
+  border-color: #5aa7d8 !important;
+}
+
+html[data-theme='dark'] .btn-secondary,
+html[data-theme='dark'] .text-link-button,
+html[data-theme='dark'] .hamburger-menu-button,
+html[data-theme='dark'] .admin-tabs-nav button,
+html[data-theme='dark'] .sidebar-nav a {
+  background: #111c28 !important;
+  border-color: var(--dark-line) !important;
+  color: var(--dark-text) !important;
+}
+
+html[data-theme='dark'] .btn-primary,
+html[data-theme='dark'] .admin-tabs-nav button.active,
+html[data-theme='dark'] .admin-tabs-nav button:hover,
+html[data-theme='dark'] .sidebar-nav a.active,
+html[data-theme='dark'] .sidebar-nav a:hover {
+  background: #2563eb !important;
+  border-color: #60a5fa !important;
+  color: #ffffff !important;
+}
+
+html[data-theme='dark'] .danger-btn {
+  color: #fecdd3 !important;
+  border-color: #7f1d1d !important;
+  background: #3f151d !important;
+}
+
+html[data-theme='dark'] .ai-usage-meter {
+  background: #0f1822 !important;
+  border-color: var(--dark-line) !important;
+}
+
+html[data-theme='dark'] .ai-usage-meter-fill {
+  background: linear-gradient(90deg, #3b82f6, #22c55e) !important;
+}
+
+html[data-theme='dark'] .status-badge,
+html[data-theme='dark'] .table-mini-status {
+  background: #102336 !important;
+  border-color: #31536d !important;
+  color: #d8efff !important;
+}
+
+@media (max-width: 1024px) {
+  .excel-system .hamburger-menu-button {
+    display: inline-flex !important;
+  }
+
+  .excel-system .sidebar-nav:not(.open),
+  .excel-system .admin-tabs-nav:not(.open) {
+    display: none !important;
+  }
+
+  .excel-system .sidebar-nav.open,
+  .excel-system .admin-tabs-nav.open {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    margin: 10px 0 0;
+  }
+}
+
+html[data-theme='dark'] .dashboard-body a,
+html[data-theme='dark'] .auth-body a,
+html[data-theme='dark'] .showtime-screen a {
+  color: #93c5fd;
+}
+
+html[data-theme='dark'] .landing-system {
+  background:
+    linear-gradient(180deg, rgba(247, 241, 232, 0.96), rgba(238, 242, 245, 0.96)),
+    radial-gradient(circle at top right, rgba(223, 181, 91, 0.22), transparent 34%) !important;
+  color: var(--text-main) !important;
+}
+
+html[data-theme='dark'] .landing-system .site-header {
+  background: rgba(247, 241, 232, 0.85) !important;
+  border-bottom-color: rgba(94, 64, 51, 0.08) !important;
+}
+
+html[data-theme='dark'] .landing-system h1,
+html[data-theme='dark'] .landing-system h2,
+html[data-theme='dark'] .landing-system h3,
+html[data-theme='dark'] .landing-system p,
+html[data-theme='dark'] .landing-system a,
+html[data-theme='dark'] .landing-system span {
+  color: inherit;
+}
+
+html[data-theme='dark'] .landing-system .feature-card,
+html[data-theme='dark'] .landing-system .system-timeline article,
+html[data-theme='dark'] .landing-system .hero-stats article,
+html[data-theme='dark'] .landing-system .system-preview-card {
+  background: rgba(255, 250, 244, 0.86) !important;
+  border-color: var(--line) !important;
+  box-shadow: var(--shadow) !important;
 }

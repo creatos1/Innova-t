@@ -6,10 +6,12 @@ import StudentDashboard from './pages/StudentDashboard'
 import AdminDashboard from './pages/AdminDashboard'
 import TeacherDashboard from './pages/TeacherDashboard'
 import ShowTimeDisplay from './pages/ShowTimeDisplay'
+import GlobalTranslator from './components/GlobalTranslator'
 
 function App() {
   return (
     <Router>
+      <GlobalTranslator />
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />

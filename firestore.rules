@@ -95,6 +95,9 @@ service cloud.firestore {
       return studentId != ''
         && ownsStudent(studentId)
         && request.resource.data.diff(resource.data).changedKeys().hasOnly(['studentIds', 'updatedAt'])
+        && resource.data.reservationSource == 'student-auto'
+        && resource.data.status == 'pendiente_asignacion'
+        && resource.data.teacherId == ''
         && resource.data.studentIds.hasAny([studentId])
         && !request.resource.data.studentIds.hasAny([studentId])
         && resource.data.studentIds.hasAll(request.resource.data.studentIds)
@@ -118,8 +121,20 @@ service cloud.firestore {
         && (
           request.auth.token.email == 'admin@innova-t.com'
           || request.auth.token.email == 'www.axelelquincle@gmail.com'
+          || request.auth.token.email == 'innova.teaching22@gmail.com'
         )
         && request.resource.data.rol == 'admin';
+    }
+
+    function isRegisteredAdminFirstLoginUser(userId) {
+      return signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.rol == 'admin'
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.accessDocId is string
+        && exists(/databases/$(database)/documents/usuarios/$(request.resource.data.accessDocId))
+        && get(/databases/$(database)/documents/usuarios/$(request.resource.data.accessDocId)).data.email == request.auth.token.email
+        && get(/databases/$(database)/documents/usuarios/$(request.resource.data.accessDocId)).data.rol == 'admin';
     }
 
     function isStudentFirstLoginUser(userId) {
@@ -158,6 +173,11 @@ service cloud.firestore {
         && request.resource.data.uid == request.auth.uid;
     }
 
+    function isStaffProgressUpdate() {
+      return isStaff()
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly(['completedLessonIds', 'updatedAt']);
+    }
+
     function isLoginIdStudentClaim() {
       return signedIn()
         && request.resource.data.role == 'estudiante'
@@ -179,12 +199,15 @@ service cloud.firestore {
     }
 
     match /usuarios/{userId} {
-      allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow get: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin() || isLimitedLoginLookup();
       allow create: if isAdmin()
         || isBootstrapAdmin(userId)
+        || isRegisteredAdminFirstLoginUser(userId)
         || isStudentFirstLoginUser(userId)
         || isTeacherFirstLoginUser(userId);
       allow update: if isAdmin()
+        || isRegisteredAdminFirstLoginUser(userId)
         || isStudentFirstLoginUser(userId)
         || isTeacherFirstLoginUser(userId);
       allow delete: if isAdmin();
@@ -205,7 +228,7 @@ service cloud.firestore {
       allow get: if isStaff() || ownsStudent(studentId);
       allow list: if isStaff() || isLimitedLoginLookup();
       allow create, delete: if isAdmin();
-      allow update: if isAdmin() || isStudentUidClaim();
+      allow update: if isAdmin() || isStudentUidClaim() || isStaffProgressUpdate();
     }
 
     match /niveles/{levelId} {

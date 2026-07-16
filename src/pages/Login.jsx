@@ -4,7 +4,7 @@ import { sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from 'fir
 import { doc, getDoc } from 'firebase/firestore'
 import BrandLogo from '../components/BrandLogo'
 import { auth, db } from '../firebase'
-import { dashboardPathForRole, getLoginErrorMessage, resolveLoginRecord, writeAccessProfile } from '../services/loginAccess'
+import { dashboardPathForRole, formatLoginIdentifierInput, getLoginErrorMessage, resolveLoginRecord, writeAccessProfile } from '../services/loginAccess'
 
 function Login() {
   const [loginId, setLoginId] = useState('')
@@ -134,7 +134,7 @@ function Login() {
                 type="text"
                 placeholder="admin@innova-t.com, 0252 o T-001"
                 value={loginId}
-                onChange={(event) => setLoginId(event.target.value)}
+                onChange={(event) => setLoginId(formatLoginIdentifierInput(event.target.value))}
                 disabled={loading}
                 autoComplete="username"
                 required

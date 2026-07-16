@@ -3,6 +3,7 @@ import { buildInstituteInsights } from '../domain/instituteState'
 import {
   createAttendanceRecord,
   createAttendanceRecords,
+  createAdminRecord,
   createClassRecord,
   createBlockoutRecord,
   createClassroomRecord,
@@ -14,6 +15,7 @@ import {
   cancelStudentReservationRecord,
   deleteClassRecord,
   deleteBlockoutRecord,
+  deleteAdminRecord,
   deleteClassroomRecord,
   deleteLevelRecord,
   deleteLessonRecord,
@@ -27,7 +29,9 @@ import {
   registerAbsenceNotice,
   reserveStudentClassRecord,
   subscribeInstituteData,
+  syncAttendanceProgressRecords,
   updateAttendanceStatus,
+  updateAdminRecord,
   updateClassRecord,
   updateClassroomRecord,
   updateClassRosterRecord,
@@ -47,6 +51,7 @@ export function useInstituteData() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
+  const [lastProgressSyncKey, setLastProgressSyncKey] = useState('')
 
   useEffect(() => {
     if (authLoading) return undefined
@@ -82,6 +87,25 @@ export function useInstituteData() {
   const insights = useMemo(() => (
     buildInstituteInsights(data, { now: new Date() })
   ), [data])
+
+  useEffect(() => {
+    const role = profile?.rol || profile?.role
+    if (!['admin', 'teacher'].includes(role)) return
+    if (!data.attendance.length || !data.classes.length) return
+
+    const syncKey = data.attendance
+      .filter(record => record.attended === true)
+      .map(record => `${record.id || record.classId}-${record.studentId}-${record.lessonId || ''}`)
+      .sort()
+      .join('|')
+
+    if (!syncKey || syncKey === lastProgressSyncKey) return
+    setLastProgressSyncKey(syncKey)
+
+    syncAttendanceProgressRecords(data.attendance, data.classes).catch(error => {
+      console.warn('No se pudo sincronizar progreso desde asistencias.', error)
+    })
+  }, [data.attendance, data.classes, lastProgressSyncKey, profile])
 
   async function runWrite(action, successMessage) {
     try {
@@ -135,6 +159,27 @@ export function useInstituteData() {
     await runWrite(
       () => deleteStudentRecord(studentId, publicId),
       'Estudiante eliminado.'
+    )
+  }
+
+  async function createAdmin(payload) {
+    await runWrite(
+      () => createAdminRecord(payload),
+      'Admin guardado. Ya puede crear su contrasena o restablecer acceso con su correo.'
+    )
+  }
+
+  async function updateAdmin(adminId, payload) {
+    await runWrite(
+      () => updateAdminRecord(adminId, payload),
+      'Admin actualizado.'
+    )
+  }
+
+  async function deleteAdmin(adminId) {
+    await runWrite(
+      () => deleteAdminRecord(adminId, user?.uid || ''),
+      'Admin eliminado.'
     )
   }
 
@@ -364,6 +409,9 @@ export function useInstituteData() {
     createStudent,
     updateStudent,
     deleteStudent,
+    createAdmin,
+    updateAdmin,
+    deleteAdmin,
     createClass,
     updateClass,
     deleteClass,

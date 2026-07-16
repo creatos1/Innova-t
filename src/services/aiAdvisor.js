@@ -13,7 +13,7 @@ import { getClassDateValue, getClassTimeValue } from '../domain/scheduleMatcher'
 const AI_ENABLED = import.meta.env.VITE_ENABLE_FIREBASE_AI === 'true'
 const DEFAULT_MODEL = import.meta.env.VITE_GEMINI_MODEL || 'gemini-2.5-flash-lite'
 const USE_APP_CHECK = import.meta.env.VITE_FIREBASE_AI_APP_CHECK === 'true'
-const MISTRAL_ENABLED = import.meta.env.VITE_ENABLE_MISTRAL_AI === 'true'
+const MISTRAL_ENABLED = import.meta.env.VITE_ENABLE_MISTRAL_AI !== 'false'
 const MISTRAL_MODEL = import.meta.env.VITE_MISTRAL_MODEL || 'mistral-server'
 const MISTRAL_PROXY_URL = import.meta.env.VITE_MISTRAL_PROXY_URL || '/api/mistral-class-plan'
 

@@ -16,7 +16,7 @@ import {
   where,
   writeBatch
 } from 'firebase/firestore'
-import { db } from '../firebase'
+import { auth, db } from '../firebase'
 import {
   ACADEMIC_LEVELS,
   LESSONS,
@@ -46,6 +46,7 @@ const COLLECTIONS = {
 export const EMPTY_INSTITUTE_DATA = {
   source: 'firebase',
   students: [],
+  users: [],
   levels: [],
   lessons: [],
   teachers: [],
@@ -183,6 +184,9 @@ export function subscribeInstituteData({ profile, onData, onError }) {
     attach('grades', collection(db, COLLECTIONS.grades))
     attach('alerts', collection(db, COLLECTIONS.alerts))
     attach('aiUsage', collection(db, COLLECTIONS.aiUsage))
+    if (getRole(profile) === 'admin') {
+      attach('users', collection(db, COLLECTIONS.users))
+    }
   } else {
     const studentId = getStudentId(profile)
 
@@ -231,12 +235,52 @@ function normalizePublicId(value) {
   return String(value || '').trim().toUpperCase().replace(/\s+/g, '')
 }
 
+function normalizeTeacherPublicId(value) {
+  const cleanValue = normalizePublicId(value)
+  if (/^T-?\d+$/.test(cleanValue)) {
+    const number = cleanValue.replace(/^T-?/, '')
+    return `T-${number.padStart(3, '0')}`
+  }
+  return cleanValue
+}
+
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase()
 }
 
+async function requestAuthEmailUpdate(uid, email) {
+  if (!uid || !email) return
+
+  const token = await auth.currentUser?.getIdToken()
+  if (!token) {
+    throw new Error('Inicia sesion de nuevo para cambiar correos de acceso.')
+  }
+
+  const response = await fetch('/api/auth-update-email', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ uid, email })
+  })
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}))
+    throw new Error(body.error || 'No se pudo cambiar el correo en Authentication.')
+  }
+}
+
+function uniqueValues(values = []) {
+  return Array.from(new Set(values.filter(Boolean)))
+}
+
 function getPublicIdDocumentId(publicId) {
   return normalizePublicId(publicId).replace(/\//g, '-')
+}
+
+function getAdminDocumentId(email) {
+  return `admin-${normalizeDocumentId(email)}`
 }
 
 async function commitBatchOperations(operations = []) {
@@ -386,8 +430,16 @@ export async function createStudentRecord(payload) {
 }
 
 export async function updateStudentRecord(studentId, payload) {
+  const studentRef = doc(db, COLLECTIONS.students, studentId)
+  const studentSnapshot = await getDoc(studentRef)
+  const previousStudent = studentSnapshot.exists() ? studentSnapshot.data() : {}
   const publicId = normalizePublicId(payload.publicId)
   const email = normalizeEmail(payload.email)
+  const oldPublicId = normalizePublicId(previousStudent.publicId)
+  const oldEmail = normalizeEmail(previousStudent.email)
+  const oldLoginSnapshot = oldPublicId ? await getDoc(doc(db, COLLECTIONS.loginIds, oldPublicId)) : null
+  const oldLoginData = oldLoginSnapshot?.exists() ? oldLoginSnapshot.data() : {}
+  const uid = payload.uid || previousStudent.uid || oldLoginData.uid || ''
   const completedLessonIds = getPreviousLessonIds(payload.currentLessonId)
   const updatePayload = {
     publicId,
@@ -404,22 +456,67 @@ export async function updateStudentRecord(studentId, payload) {
     updatedAt: serverTimestamp()
   }
 
-  if (completedLessonIds.length) {
-    updatePayload.completedLessonIds = arrayUnion(...completedLessonIds)
+  if (Array.isArray(payload.completedLessonIds)) {
+    updatePayload.completedLessonIds = payload.completedLessonIds
   }
 
-  await updateDoc(doc(db, COLLECTIONS.students, studentId), updatePayload)
+  if (completedLessonIds.length) {
+    updatePayload.completedLessonIds = Array.isArray(updatePayload.completedLessonIds)
+      ? uniqueValues([...updatePayload.completedLessonIds, ...completedLessonIds])
+      : arrayUnion(...completedLessonIds)
+  }
+
+  if (uid && email && oldEmail !== email) {
+    await requestAuthEmailUpdate(uid, email)
+  }
+
+  const userDocsWithOldEmail = oldEmail && oldEmail !== email
+    ? await getDocs(query(collection(db, COLLECTIONS.users), where('email', '==', oldEmail)))
+    : null
+  const batch = writeBatch(db)
+
+  batch.update(studentRef, {
+    ...updatePayload,
+    ...(uid ? { uid } : {})
+  })
+
+  if (oldPublicId && oldPublicId !== publicId) {
+    batch.delete(doc(db, COLLECTIONS.loginIds, oldPublicId))
+  }
 
   if (publicId && email) {
-    await setDoc(doc(db, COLLECTIONS.loginIds, publicId), {
+    batch.set(doc(db, COLLECTIONS.loginIds, publicId), {
       publicId,
       studentId,
       role: 'estudiante',
       email,
       fullName: payload.fullName || '',
+      ...(uid ? { uid } : {}),
       updatedAt: serverTimestamp()
     }, { merge: true })
   }
+
+  if (uid) {
+    batch.set(doc(db, COLLECTIONS.users, uid), {
+      uid,
+      email,
+      rol: 'estudiante',
+      role: 'estudiante',
+      nombre: payload.fullName || '',
+      studentId,
+      publicId,
+      updatedAt: serverTimestamp()
+    }, { merge: true })
+  }
+
+  userDocsWithOldEmail?.docs.forEach(userDoc => {
+    batch.set(userDoc.ref, {
+      email,
+      updatedAt: serverTimestamp()
+    }, { merge: true })
+  })
+
+  await batch.commit()
 }
 
 export async function deleteStudentRecord(studentId, publicId = '') {
@@ -479,6 +576,77 @@ export async function deleteStudentRecord(studentId, publicId = '') {
       updatedAt: serverTimestamp()
     }))
   })
+
+  await commitBatchOperations(operations)
+}
+
+export async function createAdminRecord(payload) {
+  const email = normalizeEmail(payload.email)
+  const nombre = String(payload.nombre || payload.name || email).trim()
+
+  if (!email) throw new Error('Escribe el correo del admin.')
+
+  const id = payload.id || getAdminDocumentId(email)
+  await setDoc(doc(db, COLLECTIONS.users, id), {
+    id,
+    accessDocId: id,
+    email,
+    nombre,
+    rol: 'admin',
+    role: 'admin',
+    status: payload.status || 'pendiente',
+    uid: payload.uid || '',
+    updatedAt: serverTimestamp(),
+    createdAt: serverTimestamp()
+  }, { merge: true })
+
+  return id
+}
+
+export async function updateAdminRecord(adminId, payload) {
+  const email = normalizeEmail(payload.email)
+  const nombre = String(payload.nombre || payload.name || email).trim()
+
+  if (!adminId) throw new Error('Selecciona un admin.')
+  if (!email) throw new Error('El admin necesita correo.')
+
+  await setDoc(doc(db, COLLECTIONS.users, adminId), {
+    email,
+    nombre,
+    rol: 'admin',
+    role: 'admin',
+    status: payload.status || 'activo',
+    uid: payload.uid || '',
+    accessDocId: payload.accessDocId || adminId,
+    updatedAt: serverTimestamp()
+  }, { merge: true })
+}
+
+export async function deleteAdminRecord(adminId, currentUid = '') {
+  if (!adminId) return
+  if (adminId === currentUid) {
+    throw new Error('No puedes eliminar el admin con el que estas conectado.')
+  }
+
+  const adminRef = doc(db, COLLECTIONS.users, adminId)
+  const adminSnapshot = await getDoc(adminRef)
+  const adminData = adminSnapshot.exists() ? adminSnapshot.data() : {}
+  const uid = adminData.uid || ''
+
+  const operations = [batch => batch.delete(adminRef)]
+  if (uid && uid !== currentUid && uid !== adminId) {
+    operations.push(batch => batch.delete(doc(db, COLLECTIONS.users, uid)))
+  }
+
+  if (uid && uid !== currentUid) {
+    enqueueAuthDeletion(operations, {
+      uid,
+      email: adminData.email || '',
+      role: 'admin',
+      sourceId: adminId,
+      publicId: ''
+    })
+  }
 
   await commitBatchOperations(operations)
 }
@@ -654,13 +822,45 @@ export async function cancelStudentReservationRecord(classId, studentId) {
     const classItem = classSnapshot.data()
     const studentIds = classItem.studentIds || []
     const isOnlyStudent = studentIds.length === 1 && studentIds[0] === studentId
-
-    if (
-      isOnlyStudent
-      && classItem.reservationSource === 'student-auto'
+    const canStudentCancel = classItem.reservationSource === 'student-auto'
       && classItem.status === 'pendiente_asignacion'
       && !classItem.teacherId
-    ) {
+
+    if (!canStudentCancel) {
+      throw new Error('Esta clase ya fue formada por admin y ya no se puede cancelar desde alumno.')
+    }
+
+    const reservationBlockId = classItem.reservationBlockId || ''
+    if (reservationBlockId) {
+      const blockDocs = await getDocs(query(collection(db, COLLECTIONS.classes), where('reservationBlockId', '==', reservationBlockId)))
+      const operations = []
+
+      blockDocs.docs.forEach(snapshot => {
+        const blockClass = snapshot.data()
+        const blockStudentIds = blockClass.studentIds || []
+        const blockCanCancel = blockClass.reservationSource === 'student-auto'
+          && blockClass.status === 'pendiente_asignacion'
+          && !blockClass.teacherId
+          && blockStudentIds.includes(studentId)
+
+        if (!blockCanCancel) return
+        if (blockStudentIds.length === 1) {
+          operations.push(batch => batch.delete(snapshot.ref))
+        } else {
+          operations.push(batch => batch.update(snapshot.ref, {
+            studentIds: arrayRemove(studentId),
+            updatedAt: serverTimestamp()
+          }))
+        }
+      })
+
+      if (operations.length) {
+        await commitBatchOperations(operations)
+        return
+      }
+    }
+
+    if (isOnlyStudent) {
       await deleteDoc(classRef)
       return
     }
@@ -715,15 +915,32 @@ export async function deleteGradeRecord(gradeId) {
 }
 
 export async function createAttendanceRecord(payload) {
-  const result = await addDoc(collection(db, COLLECTIONS.attendance), {
+  let lessonId = payload.lessonId || ''
+
+  if (!lessonId && payload.classId) {
+    const classSnapshot = await getDoc(doc(db, COLLECTIONS.classes, payload.classId))
+    lessonId = classSnapshot.exists() ? classSnapshot.data().lessonIds?.[0] || '' : ''
+  }
+
+  const attendancePayload = {
     ...payload,
+    ...(lessonId ? { lessonId } : {}),
     attended: payload.attended === true,
     hoursCredited: Number(payload.hoursCredited || 0),
     absenceNoticeAt: payload.absenceNoticeAt || null,
     recordedAt: new Date().toISOString(),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
-  })
+  }
+  const result = await addDoc(collection(db, COLLECTIONS.attendance), attendancePayload)
+
+  if (attendancePayload.attended && attendancePayload.studentId && attendancePayload.lessonId) {
+    await updateDoc(doc(db, COLLECTIONS.students, attendancePayload.studentId), {
+      completedLessonIds: arrayUnion(attendancePayload.lessonId),
+      updatedAt: serverTimestamp()
+    })
+  }
+
   return result.id
 }
 
@@ -732,6 +949,16 @@ export async function createAttendanceRecords(records = []) {
 
   const batch = writeBatch(db)
   const ids = []
+  const classLessonById = new Map()
+  const classIds = uniqueValues(records.map(record => record.classId))
+  const classSnapshots = await Promise.all(
+    classIds.map(async classId => [classId, await getDoc(doc(db, COLLECTIONS.classes, classId))])
+  )
+
+  classSnapshots.forEach(([classId, classSnapshot]) => {
+    if (!classSnapshot.exists()) return
+    classLessonById.set(classId, classSnapshot.data().lessonIds?.[0] || '')
+  })
 
   records.forEach(record => {
     const attendanceId = record.id || (record.classId && record.studentId ? `${record.classId}-${record.studentId}` : '')
@@ -739,16 +966,26 @@ export async function createAttendanceRecords(records = []) {
       ? doc(db, COLLECTIONS.attendance, attendanceId)
       : doc(collection(db, COLLECTIONS.attendance))
     ids.push(attendanceRef.id)
-    batch.set(attendanceRef, {
+    const attendancePayload = {
       ...record,
       id: attendanceRef.id,
+      lessonId: record.lessonId || classLessonById.get(record.classId) || '',
       attended: record.attended === true,
       hoursCredited: Number(record.hoursCredited || 0),
       absenceNoticeAt: record.absenceNoticeAt || null,
       recordedAt: new Date().toISOString(),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
-    }, { merge: true })
+    }
+
+    batch.set(attendanceRef, attendancePayload, { merge: true })
+
+    if (attendancePayload.attended && attendancePayload.studentId && attendancePayload.lessonId) {
+      batch.update(doc(db, COLLECTIONS.students, attendancePayload.studentId), {
+        completedLessonIds: arrayUnion(attendancePayload.lessonId),
+        updatedAt: serverTimestamp()
+      })
+    }
   })
 
   await batch.commit()
@@ -758,7 +995,7 @@ export async function createAttendanceRecords(records = []) {
 export async function createTeacherRecord(payload) {
   const name = payload.name.trim()
   const id = normalizeTeacherId(name) || doc(collection(db, COLLECTIONS.teachers)).id
-  const publicId = normalizePublicId(payload.publicId)
+  const publicId = normalizeTeacherPublicId(payload.publicId)
   const email = normalizeEmail(payload.email)
 
   await setDoc(doc(db, COLLECTIONS.teachers, id), {
@@ -800,18 +1037,43 @@ export async function createTeacherRecord(payload) {
 }
 
 export async function updateTeacherRecord(teacherId, payload) {
+  const teacherRef = doc(db, COLLECTIONS.teachers, teacherId)
+  const teacherSnapshot = await getDoc(teacherRef)
+  const previousTeacher = teacherSnapshot.exists() ? teacherSnapshot.data() : {}
   const name = payload.name.trim()
-  const publicId = normalizePublicId(payload.publicId)
+  const publicId = normalizeTeacherPublicId(payload.publicId)
   const email = normalizeEmail(payload.email)
-  await updateDoc(doc(db, COLLECTIONS.teachers, teacherId), {
+  const oldPublicId = normalizePublicId(previousTeacher.publicId)
+  const oldEmail = normalizeEmail(previousTeacher.email)
+  const oldLoginSnapshot = oldPublicId ? await getDoc(doc(db, COLLECTIONS.loginIds, oldPublicId)) : null
+  const oldLoginData = oldLoginSnapshot?.exists() ? oldLoginSnapshot.data() : {}
+  const uid = payload.uid || previousTeacher.uid || oldLoginData.uid || ''
+  const activeUserSnapshot = uid ? await getDoc(doc(db, COLLECTIONS.users, uid)) : null
+  const activeUser = activeUserSnapshot?.exists() ? activeUserSnapshot.data() : {}
+
+  if (uid && email && oldEmail !== email) {
+    await requestAuthEmailUpdate(uid, email)
+  }
+
+  const userDocsWithOldEmail = oldEmail && oldEmail !== email
+    ? await getDocs(query(collection(db, COLLECTIONS.users), where('email', '==', oldEmail)))
+    : null
+  const batch = writeBatch(db)
+
+  batch.update(teacherRef, {
     publicId,
     name,
     email,
+    ...(uid ? { uid } : {}),
     updatedAt: serverTimestamp()
   })
 
+  if (oldPublicId && oldPublicId !== publicId) {
+    batch.delete(doc(db, COLLECTIONS.loginIds, oldPublicId))
+  }
+
   if (publicId && email) {
-    await setDoc(doc(db, COLLECTIONS.loginIds, publicId), {
+    batch.set(doc(db, COLLECTIONS.loginIds, publicId), {
       publicId,
       teacherId,
       role: 'teacher',
@@ -822,16 +1084,27 @@ export async function updateTeacherRecord(teacherId, payload) {
     }, { merge: true })
   }
 
-  if (payload.uid) {
-    await setDoc(doc(db, COLLECTIONS.users, payload.uid), {
+  if (uid) {
+    batch.set(doc(db, COLLECTIONS.users, uid), {
+      uid,
       email,
-      rol: 'teacher',
+      rol: activeUser.rol || activeUser.role || 'teacher',
+      role: activeUser.role || activeUser.rol || 'teacher',
       nombre: name,
       teacherId,
       publicId,
       updatedAt: serverTimestamp()
     }, { merge: true })
   }
+
+  userDocsWithOldEmail?.docs.forEach(userDoc => {
+    batch.set(userDoc.ref, {
+      email,
+      updatedAt: serverTimestamp()
+    }, { merge: true })
+  })
+
+  await batch.commit()
 }
 
 export async function deleteTeacherRecord(teacherId, publicId = '') {
@@ -947,11 +1220,53 @@ export async function deleteLessonRecord(lessonId) {
 }
 
 export async function updateAttendanceStatus(attendanceId, payload) {
-  await updateDoc(doc(db, COLLECTIONS.attendance, attendanceId), {
+  const attendanceRef = doc(db, COLLECTIONS.attendance, attendanceId)
+  const attendanceSnapshot = await getDoc(attendanceRef)
+  const existingAttendance = attendanceSnapshot.exists() ? attendanceSnapshot.data() : {}
+  let lessonId = payload.lessonId || existingAttendance.lessonId || ''
+
+  if (payload.attended === true && !lessonId && existingAttendance.classId) {
+    const classSnapshot = await getDoc(doc(db, COLLECTIONS.classes, existingAttendance.classId))
+    lessonId = classSnapshot.exists() ? classSnapshot.data().lessonIds?.[0] || '' : ''
+  }
+
+  await updateDoc(attendanceRef, {
     ...payload,
+    ...(lessonId ? { lessonId } : {}),
     recordedAt: new Date().toISOString(),
     updatedAt: serverTimestamp()
   })
+
+  if (payload.attended === true && existingAttendance.studentId && lessonId) {
+    await updateDoc(doc(db, COLLECTIONS.students, existingAttendance.studentId), {
+      completedLessonIds: arrayUnion(lessonId),
+      updatedAt: serverTimestamp()
+    })
+  }
+}
+
+export async function syncAttendanceProgressRecords(records = [], classes = []) {
+  const classLessonById = new Map(
+    classes.map(classItem => [classItem.id, classItem.lessonIds?.[0] || ''])
+  )
+  const operations = records
+    .filter(record => record.attended === true && record.studentId)
+    .map(record => ({
+      studentId: record.studentId,
+      lessonId: record.lessonId || classLessonById.get(record.classId) || ''
+    }))
+    .filter(item => item.lessonId)
+
+  if (!operations.length) return 0
+
+  await commitBatchOperations(operations.map(item => batch => {
+    batch.update(doc(db, COLLECTIONS.students, item.studentId), {
+      completedLessonIds: arrayUnion(item.lessonId),
+      updatedAt: serverTimestamp()
+    })
+  }))
+
+  return operations.length
 }
 
 export async function registerAbsenceNotice(attendanceId, noticeAt = new Date()) {

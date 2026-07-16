@@ -28,6 +28,22 @@ export function normalizeLoginId(value) {
   return cleanValue
 }
 
+export function formatLoginIdentifierInput(value) {
+  const rawValue = String(value || '')
+
+  if (rawValue.includes('@')) return rawValue.trim().toLowerCase()
+
+  const cleanValue = rawValue.trim().toUpperCase().replace(/\s+/g, '')
+  if (!cleanValue) return ''
+
+  if (/^T/.test(cleanValue)) {
+    const digits = cleanValue.replace(/^T-?/, '').replace(/\D/g, '').slice(0, 3)
+    return `T-${digits}`
+  }
+
+  return cleanValue
+}
+
 export function getLoginIdCandidates(value) {
   const cleanValue = value.trim().toUpperCase().replace(/\s+/g, '')
   const normalized = normalizeLoginId(cleanValue)
@@ -60,7 +76,7 @@ async function getFirstByEmail(collectionName, email) {
   return getFirstByField(collectionName, 'email', email)
 }
 
-export async function resolveLoginRecord(value) {
+export async function resolveLoginRecord(value, options = {}) {
   const cleanValue = value.trim()
   if (!cleanValue) throw new Error('Escribe tu correo o ID publico.')
 
@@ -68,6 +84,22 @@ export async function resolveLoginRecord(value) {
     const email = cleanValue.toLowerCase()
     const student = await getFirstByEmail('estudiantes', email)
     const teacher = await getFirstByEmail('teachers', email)
+    const userProfile = await getFirstByEmail('usuarios', email)
+
+    if (options.preferAdmin && userProfile?.email && (userProfile.rol || userProfile.role) === 'admin') {
+      return {
+        publicId: userProfile.publicId || '',
+        email: userProfile.email || email,
+        role: 'admin',
+        studentId: userProfile.studentId || '',
+        teacherId: userProfile.teacherId || '',
+        fullName: userProfile.nombre || '',
+        name: userProfile.nombre || '',
+        uid: userProfile.uid || '',
+        accessDocId: userProfile.accessDocId || userProfile.id || '',
+        source: 'usuarios'
+      }
+    }
 
     if (student?.email) {
       return {
@@ -93,11 +125,22 @@ export async function resolveLoginRecord(value) {
       }
     }
 
-    return {
-      email,
-      role: '',
-      source: 'email'
+    if (userProfile?.email && (userProfile.rol || userProfile.role)) {
+      return {
+        publicId: userProfile.publicId || '',
+        email: userProfile.email || email,
+        role: userProfile.rol || userProfile.role,
+        studentId: userProfile.studentId || '',
+        teacherId: userProfile.teacherId || '',
+        fullName: userProfile.nombre || '',
+        name: userProfile.nombre || '',
+        uid: userProfile.uid || '',
+        accessDocId: userProfile.accessDocId || userProfile.id || '',
+        source: 'usuarios'
+      }
     }
+
+    throw new Error('Ese correo no esta registrado en el sistema. Pide al admin que lo de de alta primero.')
   }
 
   const candidates = getLoginIdCandidates(cleanValue)
@@ -165,6 +208,22 @@ export async function resolveLoginRecord(value) {
 
 export async function writeAccessProfile(user, loginRecord) {
   if (!loginRecord.role || loginRecord.source === 'email') return
+
+  if (loginRecord.role === 'admin') {
+    const profile = {
+      uid: user.uid,
+      email: user.email,
+      rol: 'admin',
+      role: 'admin',
+      nombre: loginRecord.fullName || loginRecord.name || user.email,
+      status: 'activo',
+      accessDocId: loginRecord.accessDocId || '',
+      updatedAt: serverTimestamp()
+    }
+
+    await setDoc(doc(db, 'usuarios', user.uid), profile, { merge: true })
+    return
+  }
 
   const isTeacher = loginRecord.role === 'teacher'
   const targetCollection = isTeacher ? 'teachers' : 'estudiantes'

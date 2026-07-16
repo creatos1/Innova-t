@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import ActionMessageModal from '../components/ActionMessageModal'
 import BrandLogo from '../components/BrandLogo'
 import StatusBadge from '../components/StatusBadge'
+import SystemControls, { useUiLanguage } from '../components/SystemControls'
 import { getCanonicalLevelId, getLesson, getLessonsByLevel, getLevel, isFreeTopicLevelId } from '../domain/academicCatalog'
 import { formatDateTime, toDate } from '../domain/dateUtils'
 import {
@@ -17,23 +18,28 @@ import {
   isSlotBlocked
 } from '../domain/scheduleMatcher'
 import { generateClassFormationSuggestions } from '../services/aiAdvisor'
+import { formatLoginIdentifierInput, normalizeLoginId } from '../services/loginAccess'
 import { recordAiUsageEvent } from '../services/instituteRepository'
+import { activateTeacherPanelProfile } from '../services/panelRole'
 import { useInstituteData } from '../services/useInstituteData'
 
 const TABS = [
-  { id: 'students', label: 'ESTUDIANTES' },
-  { id: 'teachers', label: 'TEACHERS' },
-  { id: 'payments', label: 'PAGOS' },
-  { id: 'classes', label: 'CLASES' },
-  { id: 'attendance', label: 'ASISTENCIAS' },
-  { id: 'ai-usage', label: 'USO DE IA' },
-  { id: 'catalog', label: 'LECCIONES' }
+  { id: 'classes', label: 'RESERVAS', labelEn: 'BOOKINGS' },
+  { id: 'students', label: 'ESTUDIANTES', labelEn: 'STUDENTS' },
+  { id: 'payments', label: 'PAGOS', labelEn: 'PAYMENTS' },
+  { id: 'teachers', label: 'TEACHERS', labelEn: 'TEACHERS' },
+  { id: 'attendance', label: 'ASISTENCIAS', labelEn: 'ATTENDANCE' },
+  { id: 'catalog', label: 'LECCIONES', labelEn: 'LESSONS' },
+  { id: 'roles', label: 'ROLES', labelEn: 'ROLES' },
+  { id: 'ai-usage', label: 'USO DE IA', labelEn: 'AI USAGE' }
+  
 ]
 
 const DEFAULT_STUDENT_LEVEL_ID = 'pre-starter'
 const DEFAULT_STUDENT_LESSON_ID = 'L1'
 const PAYMENT_MONTH_COLUMNS = 12
 const MISTRAL_MONTHLY_LIMIT = Math.max(1, Number(import.meta.env.VITE_MISTRAL_MONTHLY_LIMIT || 1000))
+const HIDDEN_ADMIN_EMAILS = ['www.axelelquincle@gmail.com']
 
 function buildDateInput(year, monthIndex, day) {
   const lastDay = new Date(year, monthIndex + 1, 0).getDate()
@@ -125,6 +131,16 @@ function nextTeacherPublicId(teachers = []) {
   return `T-${String(maxNumber + 1).padStart(3, '0')}`
 }
 
+function formatTeacherPublicIdInput(value) {
+  const formatted = formatLoginIdentifierInput(value)
+  return formatted.startsWith('T-') ? formatted : formatted.replace(/[^0-9]/g, '')
+}
+
+function normalizeTeacherPublicIdInput(value) {
+  const formatted = normalizeLoginId(formatTeacherPublicIdInput(value))
+  return formatted.startsWith('T-') ? formatted : formatted
+}
+
 function getClassDurationHours(classItem) {
   const hours = Number(classItem?.durationHours || 1)
   return Number.isFinite(hours) ? Math.max(1, hours) : 1
@@ -139,18 +155,60 @@ function hasClassStudents(classItem) {
   return Array.isArray(classItem?.studentIds) && classItem.studentIds.length > 0
 }
 
+function getClassLessonIds(classItem) {
+  return uniqueValues([
+    ...(Array.isArray(classItem?.lessonIds) ? classItem.lessonIds : []),
+    classItem?.lessonId
+  ])
+}
+
+function findStudentLessonClassConflict({ studentIds = [], lessonId = '', classes = [], ignoredClassIds = [] }) {
+  if (!lessonId || !studentIds.length) return null
+
+  const selectedStudents = new Set(studentIds)
+  const ignored = new Set(ignoredClassIds.filter(Boolean))
+
+  return classes.find(classItem => {
+    if (!classItem?.id || ignored.has(classItem.id)) return false
+    if ((classItem.status || 'programada') === 'cancelada') return false
+    if (!getClassLessonIds(classItem).includes(lessonId)) return false
+    return (classItem.studentIds || []).some(studentId => selectedStudents.has(studentId))
+  }) || null
+}
+
+function buildStudentLessonConflictMessage(conflictClass, studentIds = [], lessonId = '', students = [], lessons = []) {
+  const studentId = (conflictClass?.studentIds || []).find(id => studentIds.includes(id))
+  const student = students.find(item => item.id === studentId)
+  const lesson = getLesson(lessonId, lessons)
+  const studentName = student ? `${student.publicId || student.id} - ${student.fullName || student.name || 'Alumno'}` : 'Este alumno'
+  const lessonName = lesson ? `${lesson.id} ${lesson.name}` : 'esta leccion'
+
+  return `${studentName} ya tiene una reserva o clase registrada para ${lessonName}. Cambia el tema o quita al alumno antes de formar la clase.`
+}
+
 function getRegisteredLessonIdsForStudent(studentId, classes = [], attendance = [], students = []) {
   const student = students.find(item => item.id === studentId)
   const lessonIds = new Set(Array.isArray(student?.completedLessonIds) ? student.completedLessonIds : [])
+  getAttendedLessonIdsForStudent(studentId, classes, attendance).forEach(lessonId => lessonIds.add(lessonId))
+
+  return lessonIds
+}
+
+function getAttendedLessonIdsForStudent(studentId, classes = [], attendance = []) {
   const attendedClassIds = new Set(
     attendance
       .filter(record => record.studentId === studentId && record.attended === true)
       .map(record => record.classId)
   )
+  const lessonIds = new Set(
+    attendance
+      .filter(record => record.studentId === studentId && record.attended === true && record.lessonId)
+      .map(record => record.lessonId)
+  )
 
   classes.forEach(classItem => {
     if ((classItem.status || 'programada') === 'cancelada') return
-    if (!classItem.studentIds?.includes(studentId) && !attendedClassIds.has(classItem.id)) return
+    if (!attendedClassIds.has(classItem.id)) return
     ;(classItem.lessonIds || []).forEach(lessonId => {
       if (lessonId) lessonIds.add(lessonId)
     })
@@ -369,7 +427,8 @@ function emptyStudentForm(today) {
     enrollmentDate: today,
     status: 'activo',
     scholarshipStatus: 'activa',
-    progressPercent: 0
+    progressPercent: 0,
+    completedLessonIds: []
   }
 }
 
@@ -384,11 +443,14 @@ function studentToForm(student, today) {
     enrollmentDate: student?.enrollmentDate || today,
     status: student?.status || 'activo',
     scholarshipStatus: student?.scholarshipStatus || 'activa',
-    progressPercent: Number(student?.progressPercent || 0)
+    progressPercent: Number(student?.progressPercent || 0),
+    completedLessonIds: Array.isArray(student?.completedLessonIds) ? student.completedLessonIds : []
   }
 }
 
 function AdminDashboard() {
+  const navigate = useNavigate()
+  const uiLanguage = useUiLanguage()
   const {
     user,
     profile,
@@ -406,6 +468,7 @@ function AdminDashboard() {
     createLesson,
     createLevel,
     createPayment,
+    createAdmin,
     createStudent,
     createTeacher,
     deleteClass,
@@ -414,6 +477,7 @@ function AdminDashboard() {
     deleteLesson,
     deleteLevel,
     deleteStudent,
+    deleteAdmin,
     deleteTeacher,
     markAttendance,
     seedAcademicCatalog,
@@ -424,6 +488,7 @@ function AdminDashboard() {
     updateLesson,
     updateLevel,
     updatePayment,
+    updateAdmin,
     saveGrade,
     deleteGrade,
     updateStudent,
@@ -431,11 +496,21 @@ function AdminDashboard() {
   } = useInstituteData()
 
   const todayMexico = useMemo(() => getMexicoDateInput(), [])
-  const [activeTab, setActiveTab] = useState('students')
+  const [activeTab, setActiveTab] = useState('classes')
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [selectedStudentId, setSelectedStudentId] = useState('')
   const [studentForm, setStudentForm] = useState(() => emptyStudentForm(todayMexico))
   const [studentDraft, setStudentDraft] = useState(() => emptyStudentForm(todayMexico))
+  const [adminForm, setAdminForm] = useState({ nombre: 'Innova Teaching', email: 'innova.teaching22@gmail.com' })
+  const [adminDrafts, setAdminDrafts] = useState({})
   const [teacherForm, setTeacherForm] = useState({ publicId: '', name: '', email: '' })
+  const [roleAssignmentForm, setRoleAssignmentForm] = useState({
+    name: '',
+    email: '',
+    publicId: '',
+    admin: true,
+    teacher: false
+  })
   const [teacherDrafts, setTeacherDrafts] = useState({})
   const [classroomForm, setClassroomForm] = useState({ name: '' })
   const [classroomDrafts, setClassroomDrafts] = useState({})
@@ -479,12 +554,21 @@ function AdminDashboard() {
   const [listFilters, setListFilters] = useState({
     students: { search: '', order: 'name-asc' },
     teachers: { search: '', order: 'name-asc' },
+    admins: { search: '', order: 'name-asc' },
     payments: { search: '', order: 'name-asc' },
     classes: { search: '', order: 'date-asc' },
     attendance: { search: '', order: 'name-asc' },
     catalog: { search: '', order: 'level-asc' }
   })
   const [reservationFilters, setReservationFilters] = useState({
+    date: '',
+    time: ''
+  })
+  const [reservationStudentFilters, setReservationStudentFilters] = useState({
+    date: '',
+    time: ''
+  })
+  const [classRegistryFilters, setClassRegistryFilters] = useState({
     date: '',
     time: ''
   })
@@ -508,9 +592,42 @@ function AdminDashboard() {
   const [lessonDrafts, setLessonDrafts] = useState({})
 
   const isAdmin = profile?.rol === 'admin'
+  const uiText = {
+    showTime: uiLanguage === 'en' ? 'Show time' : 'Show time',
+    switchTeacher: uiLanguage === 'en' ? 'Switch to teacher' : 'Cambiar a teacher',
+    logout: uiLanguage === 'en' ? 'Log out' : 'Cerrar sesion',
+    menu: uiLanguage === 'en' ? 'Menu' : 'Menu'
+  }
   const requireLogin = !loading && (!user || !profile)
   const sortedStudents = useMemo(() => sortByName(data.students), [data.students])
   const sortedTeachers = useMemo(() => sortByName(data.teachers), [data.teachers])
+  const hasTeacherPanelAccess = useMemo(() => (
+    sortedTeachers.some(teacher => (
+      String(teacher.email || '').toLowerCase() === String(profile?.email || user?.email || '').toLowerCase()
+    ))
+  ), [profile?.email, sortedTeachers, user?.email])
+  const linkedTeacherProfile = useMemo(() => (
+    sortedTeachers.find(teacher => (
+      String(teacher.email || '').toLowerCase() === String(profile?.email || user?.email || '').toLowerCase()
+    ))
+  ), [profile?.email, sortedTeachers, user?.email])
+  const sortedAdmins = useMemo(() => {
+    const byKey = new Map()
+    ;(data.users || [])
+      .filter(item => (item.rol || item.role) === 'admin')
+      .filter(item => !HIDDEN_ADMIN_EMAILS.includes(String(item.email || '').toLowerCase()))
+      .forEach(admin => {
+        const key = String(admin.email || admin.id || '').toLowerCase()
+        const previous = byKey.get(key)
+        const isLinked = admin.uid && admin.id === admin.uid
+        const previousLinked = previous?.uid && previous.id === previous.uid
+        if (!previous || (isLinked && !previousLinked)) byKey.set(key, admin)
+      })
+
+    return Array.from(byKey.values()).sort((a, b) => (
+      (a.nombre || a.email || '').localeCompare(b.nombre || b.email || '', 'es')
+    ))
+  }, [data.users])
   const sortedClassrooms = useMemo(() => (
     [...(data.classrooms || [])].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'es'))
   ), [data.classrooms])
@@ -577,9 +694,27 @@ function AdminDashboard() {
   const pendingAssignmentSlotGroups = useMemo(() => (
     buildPendingSlotGroups(filteredPendingAssignmentClasses, sortedStudents)
   ), [filteredPendingAssignmentClasses, sortedStudents])
+  const reservationStudentFilterDates = useMemo(() => (
+    Array.from(new Set(pendingAssignmentClasses.map(classItem => classItem.date || getClassDateValue(classItem.startAt)).filter(Boolean))).sort()
+  ), [pendingAssignmentClasses])
+  const reservationStudentFilterTimes = useMemo(() => (
+    Array.from(new Set(pendingAssignmentClasses
+      .filter(classItem => !reservationStudentFilters.date || (classItem.date || getClassDateValue(classItem.startAt)) === reservationStudentFilters.date)
+      .map(classItem => classItem.time || getClassTimeValue(classItem.startAt))
+      .filter(Boolean))).sort()
+  ), [pendingAssignmentClasses, reservationStudentFilters.date])
+  const filteredReservationStudentClasses = useMemo(() => (
+    pendingAssignmentClasses.filter(classItem => {
+      const date = classItem.date || getClassDateValue(classItem.startAt)
+      const time = classItem.time || getClassTimeValue(classItem.startAt)
+
+      return (!reservationStudentFilters.date || date === reservationStudentFilters.date)
+        && (!reservationStudentFilters.time || time === reservationStudentFilters.time)
+    })
+  ), [pendingAssignmentClasses, reservationStudentFilters])
   const reservationStudentRows = useMemo(() => (
-    buildReservationStudentRows(filteredPendingAssignmentClasses, sortedStudents)
-  ), [filteredPendingAssignmentClasses, sortedStudents])
+    buildReservationStudentRows(filteredReservationStudentClasses, sortedStudents)
+  ), [filteredReservationStudentClasses, sortedStudents])
   const selectedAttendanceClass = useMemo(() => (
     classesByRecentDate.find(classItem => classItem.id === selectedAttendanceClassId)
   ), [classesByRecentDate, selectedAttendanceClassId])
@@ -609,8 +744,14 @@ function AdminDashboard() {
       .sort((a, b) => a.studentName.localeCompare(b.studentName, 'es') || (toDate(b.startAt)?.getTime() || 0) - (toDate(a.startAt)?.getTime() || 0))
   ), [data.attendance, data.classes, data.students])
   const selectedStudentRegisteredLessons = useMemo(() => (
-    getRegisteredLessonIdsForStudent(selectedStudentId, data.classes, data.attendance, data.students)
-  ), [data.attendance, data.classes, data.students, selectedStudentId])
+    new Set([
+      ...getAttendedLessonIdsForStudent(selectedStudentId, data.classes, data.attendance),
+      ...(Array.isArray(studentDraft.completedLessonIds) ? studentDraft.completedLessonIds : [])
+    ])
+  ), [data.attendance, data.classes, selectedStudentId, studentDraft.completedLessonIds])
+  const selectedStudentAttendedLessons = useMemo(() => (
+    getAttendedLessonIdsForStudent(selectedStudentId, data.classes, data.attendance)
+  ), [data.attendance, data.classes, selectedStudentId])
   const paymentsByStudentDueDate = useMemo(() => (
     data.payments.reduce((map, payment) => {
       const key = getPaymentKey(payment.studentId, payment.dueDate)
@@ -659,6 +800,18 @@ function AdminDashboard() {
         return (a.name || '').localeCompare(b.name || '', 'es')
       })
   ), [listFilters.teachers, sortedTeachers])
+  const visibleAdmins = useMemo(() => (
+    sortedAdmins
+      .filter(admin => matchesSearch([admin.nombre, admin.email, admin.status], listFilters.admins.search))
+      .sort((a, b) => {
+        if (listFilters.admins.order === 'email-asc') return String(a.email || '').localeCompare(String(b.email || ''), 'es')
+        if (listFilters.admins.order === 'status-asc') return String(a.status || '').localeCompare(String(b.status || ''), 'es')
+        return String(a.nombre || a.email || '').localeCompare(String(b.nombre || b.email || ''), 'es')
+      })
+  ), [listFilters.admins, sortedAdmins])
+  const adminAccessEmails = useMemo(() => (
+    new Set(sortedAdmins.filter(admin => admin.uid).map(admin => String(admin.email || '').toLowerCase()))
+  ), [sortedAdmins])
   const visiblePaymentStudents = useMemo(() => (
     sortedStudents
       .filter(student => matchesSearch([student.publicId, student.fullName, student.email], listFilters.payments.search))
@@ -674,6 +827,13 @@ function AdminDashboard() {
   ), [listFilters.payments, paymentsByStudentDueDate, sortedStudents, todayMexico])
   const visibleClassesByRecentDate = useMemo(() => (
     classesByRecentDate
+      .filter(classItem => {
+        const date = classItem.date || getClassDateValue(classItem.startAt)
+        const time = classItem.time || getClassTimeValue(classItem.startAt)
+
+        return (!classRegistryFilters.date || date === classRegistryFilters.date)
+          && (!classRegistryFilters.time || time === classRegistryFilters.time)
+      })
       .filter(classItem => {
         const lesson = getLesson(classItem.lessonIds?.[0], data.lessons)
         const statusLabel = classItem.status === 'cancelada'
@@ -694,7 +854,16 @@ function AdminDashboard() {
         if (listFilters.classes.order === 'teacher-asc') return String(a.teacherName || '').localeCompare(String(b.teacherName || ''), 'es')
         return (toDate(a.startAt)?.getTime() || 0) - (toDate(b.startAt)?.getTime() || 0)
       })
-  ), [classesByRecentDate, data.lessons, listFilters.classes])
+  ), [classRegistryFilters, classesByRecentDate, data.lessons, listFilters.classes])
+  const classRegistryFilterDates = useMemo(() => (
+    Array.from(new Set(classesByRecentDate.map(classItem => classItem.date || getClassDateValue(classItem.startAt)).filter(Boolean))).sort()
+  ), [classesByRecentDate])
+  const classRegistryFilterTimes = useMemo(() => (
+    Array.from(new Set(classesByRecentDate
+      .filter(classItem => !classRegistryFilters.date || (classItem.date || getClassDateValue(classItem.startAt)) === classRegistryFilters.date)
+      .map(classItem => classItem.time || getClassTimeValue(classItem.startAt))
+      .filter(Boolean))).sort()
+  ), [classRegistryFilters.date, classesByRecentDate])
   const visibleAttendanceRows = useMemo(() => (
     attendanceRows
       .filter(record => matchesSearch([record.studentName, record.publicId, record.className, record.teacherName], listFilters.attendance.search))
@@ -749,6 +918,19 @@ function AdminDashboard() {
   }, [selectedStudent, todayMexico])
 
   useEffect(() => {
+    setAdminDrafts(prev => (
+      sortedAdmins.reduce((drafts, admin) => ({
+        ...drafts,
+        [admin.id]: prev[admin.id] || {
+          nombre: admin.nombre || '',
+          email: admin.email || '',
+          status: admin.status || (admin.uid ? 'activo' : 'pendiente')
+        }
+      }), {})
+    ))
+  }, [sortedAdmins])
+
+  useEffect(() => {
     setTeacherDrafts(prev => (
       data.teachers.reduce((drafts, teacher) => ({
         ...drafts,
@@ -782,6 +964,11 @@ function AdminDashboard() {
     if (teacherForm.publicId) return
     setTeacherForm(prev => ({ ...prev, publicId: nextTeacherPublicId(sortedTeachers) }))
   }, [sortedTeachers, teacherForm.publicId])
+
+  useEffect(() => {
+    if (roleAssignmentForm.publicId || !roleAssignmentForm.teacher) return
+    setRoleAssignmentForm(prev => ({ ...prev, publicId: nextTeacherPublicId(sortedTeachers) }))
+  }, [roleAssignmentForm.publicId, roleAssignmentForm.teacher, sortedTeachers])
 
   useEffect(() => {
     setLevelDrafts(prev => (
@@ -859,6 +1046,16 @@ function AdminDashboard() {
   }, [reservationFilterTimes, reservationFilters.time])
 
   useEffect(() => {
+    if (!reservationStudentFilters.time || reservationStudentFilterTimes.includes(reservationStudentFilters.time)) return
+    setReservationStudentFilters(prev => ({ ...prev, time: '' }))
+  }, [reservationStudentFilterTimes, reservationStudentFilters.time])
+
+  useEffect(() => {
+    if (!classRegistryFilters.time || classRegistryFilterTimes.includes(classRegistryFilters.time)) return
+    setClassRegistryFilters(prev => ({ ...prev, time: '' }))
+  }, [classRegistryFilterTimes, classRegistryFilters.time])
+
+  useEffect(() => {
     if (!studentForm.currentLevelId || studentForm.currentLessonId || !studentFormLessons[0]?.id) return
     setStudentForm(prev => ({ ...prev, currentLessonId: studentFormLessons[0].id }))
   }, [studentForm.currentLessonId, studentForm.currentLevelId, studentFormLessons])
@@ -917,11 +1114,103 @@ function AdminDashboard() {
     setSelectedStudentId('')
   }
 
+  const submitAdmin = async (event) => {
+    event.preventDefault()
+    if (!adminForm.email.trim()) return
+    await createAdmin(adminForm)
+    setAdminForm({ nombre: '', email: '' })
+  }
+
+  const saveAdminDraft = async (admin) => {
+    const draft = adminDrafts[admin.id] || {}
+    await updateAdmin(admin.id, {
+      ...admin,
+      ...draft,
+      uid: admin.uid || '',
+      accessDocId: admin.accessDocId || admin.id
+    })
+  }
+
+  const removeAdmin = async (admin) => {
+    await deleteAdmin(admin.id)
+  }
+
+  const toggleStudentCompletedLesson = (lessonId, checked) => {
+    setStudentDraft(prev => {
+      const current = new Set(Array.isArray(prev.completedLessonIds) ? prev.completedLessonIds : [])
+      if (checked) {
+        current.add(lessonId)
+      } else {
+        current.delete(lessonId)
+      }
+
+      return {
+        ...prev,
+        completedLessonIds: Array.from(current)
+      }
+    })
+  }
+
   const submitTeacher = async (event) => {
     event.preventDefault()
     if (!teacherForm.name.trim()) return
     await createTeacher(teacherForm)
     setTeacherForm({ publicId: nextTeacherPublicId(sortedTeachers), name: '', email: '' })
+  }
+
+  const submitRoleAssignment = async (event) => {
+    event.preventDefault()
+    const email = roleAssignmentForm.email.trim().toLowerCase()
+    const name = roleAssignmentForm.name.trim() || email
+
+    if (!email) {
+      setMessage('Escribe el correo para asignar roles.')
+      return
+    }
+
+    if (!roleAssignmentForm.admin && !roleAssignmentForm.teacher) {
+      setMessage('Selecciona al menos un rol: Admin o Teacher.')
+      return
+    }
+
+    if (roleAssignmentForm.admin) {
+      await createAdmin({ nombre: name, email, status: 'pendiente' })
+    }
+
+    if (roleAssignmentForm.teacher) {
+      await createTeacher({
+        publicId: roleAssignmentForm.publicId || nextTeacherPublicId(sortedTeachers),
+        name,
+        email
+      })
+    }
+
+    setRoleAssignmentForm({
+      name: '',
+      email: '',
+      publicId: roleAssignmentForm.teacher ? nextTeacherPublicId(sortedTeachers) : '',
+      admin: true,
+      teacher: false
+    })
+  }
+
+  const switchToTeacherPanel = async () => {
+    try {
+      if (!linkedTeacherProfile) {
+        setMessage('Este correo no tiene teacher registrado. Asignale rol teacher en Roles.')
+        return
+      }
+
+      await activateTeacherPanelProfile({
+        user,
+        profile,
+        teacher: linkedTeacherProfile
+      })
+      navigate('/teacher-dashboard/')
+    } catch (error) {
+      console.warn(error)
+      setMessage(error.message || 'No se pudo cambiar al panel teacher.')
+    }
   }
 
   const submitClassroom = async (event) => {
@@ -1236,6 +1525,21 @@ function AdminDashboard() {
       return
     }
 
+    for (const draft of drafts) {
+      const sourceClassIds = getSourceClassIdsForStudentIds(aiPlanGroup, draft.studentIds)
+      const conflictClass = findStudentLessonClassConflict({
+        studentIds: draft.studentIds,
+        lessonId: draft.lessonId,
+        classes: data.classes,
+        ignoredClassIds: sourceClassIds
+      })
+
+      if (conflictClass) {
+        setMessage(buildStudentLessonConflictMessage(conflictClass, draft.studentIds, draft.lessonId, sortedStudents, data.lessons))
+        return
+      }
+    }
+
     const usedAnchorIds = new Set()
     const consumedSourceIds = new Set()
 
@@ -1275,6 +1579,18 @@ function AdminDashboard() {
     }
     if (classStudentIds.length > 8) {
       setMessage('Maximo 8 estudiantes por clase.')
+      return
+    }
+
+    const conflictClass = findStudentLessonClassConflict({
+      studentIds: classStudentIds,
+      lessonId: classForm.lessonId,
+      classes: data.classes,
+      ignoredClassIds: uniqueValues([editingClassId, ...mergeSourceClassIds])
+    })
+
+    if (conflictClass) {
+      setMessage(buildStudentLessonConflictMessage(conflictClass, classStudentIds, classForm.lessonId, sortedStudents, data.lessons))
       return
     }
 
@@ -1433,9 +1749,10 @@ function AdminDashboard() {
       return {
         id: `${selectedAttendanceClass.id}-${student.id}`,
         studentId: student.id,
-        classId: selectedAttendanceClass.id,
-        className: lesson?.name || 'Clase registrada',
-        levelId: selectedAttendanceClass.levelId || lesson?.levelId || '',
+          classId: selectedAttendanceClass.id,
+          className: lesson?.name || 'Clase registrada',
+          lessonId: lesson?.id || selectedAttendanceClass.lessonIds?.[0] || '',
+          levelId: selectedAttendanceClass.levelId || lesson?.levelId || '',
         startAt: selectedAttendanceClass.startAt,
         endAt: selectedAttendanceClass.endAt,
         attended,
@@ -1735,16 +2052,27 @@ function AdminDashboard() {
                     {sortedLevels.map(level => (
                       <div className="lesson-history-group" key={level.id}>
                         <strong>{level.shortName || level.name}</strong>
-                        {getLessonsByLevel(level.id, data.lessons).map(lesson => (
-                          <label className="lesson-history-row" key={lesson.id}>
-                            <input type="checkbox" checked={selectedStudentRegisteredLessons.has(lesson.id)} readOnly />
-                            <span>{lesson.order}. {lesson.name}</span>
-                          </label>
-                        ))}
+                        {getLessonsByLevel(level.id, data.lessons).map(lesson => {
+                          const checked = selectedStudentRegisteredLessons.has(lesson.id)
+                          const lockedByAttendance = selectedStudentAttendedLessons.has(lesson.id)
+
+                          return (
+                            <label className="lesson-history-row" key={lesson.id}>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={event => toggleStudentCompletedLesson(lesson.id, event.target.checked)}
+                                disabled={!isAdmin || lockedByAttendance}
+                              />
+                              <span>{lesson.order}. {lesson.name}{lockedByAttendance ? ' - asistencia' : ''}</span>
+                            </label>
+                          )
+                        })}
                       </div>
                     ))}
                   </div>
                 </details>
+                <small>Las asistencias marcadas como "Asistio" se registran automaticamente. Admin tambien puede marcar temas manualmente y guardar el perfil.</small>
               </div>
 
               <div className="section-gap">
@@ -1868,6 +2196,201 @@ function AdminDashboard() {
     </section>
   )
 
+  const renderRolesTab = () => (
+    <section className="admin-tab-grid">
+      <article className="panel-card admin-card">
+        <div className="admin-section-title">
+          <div>
+            <h2>Asignar roles por correo</h2>
+            <p>Un mismo correo puede tener rol Admin y Teacher. El usuario usa una sola contrasena y cambia de panel.</p>
+          </div>
+        </div>
+
+        <form className="admin-form-grid" onSubmit={submitRoleAssignment}>
+          <label className="form-field">
+            <span>Nombre</span>
+            <input value={roleAssignmentForm.name} onChange={event => setRoleAssignmentForm(prev => ({ ...prev, name: event.target.value }))} placeholder="Nombre de la persona" />
+          </label>
+          <label className="form-field span-2">
+            <span>Correo</span>
+            <input type="email" value={roleAssignmentForm.email} onChange={event => setRoleAssignmentForm(prev => ({ ...prev, email: event.target.value }))} placeholder="correo@innova-t.com" required />
+          </label>
+          {roleAssignmentForm.teacher && (
+            <label className="form-field">
+              <span>ID Teacher</span>
+              <input
+                value={roleAssignmentForm.publicId}
+                onChange={event => setRoleAssignmentForm(prev => ({ ...prev, publicId: formatTeacherPublicIdInput(event.target.value) }))}
+                onBlur={() => setRoleAssignmentForm(prev => ({ ...prev, publicId: normalizeTeacherPublicIdInput(prev.publicId) }))}
+                placeholder="T-006"
+              />
+            </label>
+          )}
+          <label className="inline-check">
+            <input type="checkbox" checked={roleAssignmentForm.admin} onChange={event => setRoleAssignmentForm(prev => ({ ...prev, admin: event.target.checked }))} />
+            Admin
+          </label>
+          <label className="inline-check">
+            <input type="checkbox" checked={roleAssignmentForm.teacher} onChange={event => setRoleAssignmentForm(prev => ({ ...prev, teacher: event.target.checked, publicId: event.target.checked ? prev.publicId || nextTeacherPublicId(sortedTeachers) : prev.publicId }))} />
+            Teacher
+          </label>
+          <button className="btn btn-primary small-btn" type="submit" disabled={saving || !isAdmin}>Guardar roles</button>
+        </form>
+      </article>
+
+      <article className="panel-card admin-card">
+        <div className="admin-section-title">
+          <div>
+            <h2>Admins</h2>
+            <p>Alta y control de administradores. El admin nuevo crea su contrasena desde el login.</p>
+          </div>
+        </div>
+
+        <form className="admin-form-grid" onSubmit={submitAdmin}>
+          <label className="form-field">
+            <span>Nombre</span>
+            <input value={adminForm.nombre} onChange={event => setAdminForm(prev => ({ ...prev, nombre: event.target.value }))} placeholder="Administrador" required />
+          </label>
+          <label className="form-field span-2">
+            <span>Correo</span>
+            <input type="email" value={adminForm.email} onChange={event => setAdminForm(prev => ({ ...prev, email: event.target.value }))} placeholder="admin@innova-t.com" required />
+          </label>
+          <button className="btn btn-primary small-btn" type="submit" disabled={saving || !isAdmin}>Agregar admin</button>
+        </form>
+
+        <div className="teacher-list section-gap">
+          {renderListTools('admins', [
+            { value: 'name-asc', label: 'Nombre A-Z' },
+            { value: 'email-asc', label: 'Correo' },
+            { value: 'status-asc', label: 'Estatus' }
+          ])}
+          {visibleAdmins.map(admin => {
+            const draft = adminDrafts[admin.id] || {}
+            const isCurrentAdmin = admin.id === user?.uid || admin.uid === user?.uid
+            return (
+              <div className="teacher-row" key={admin.id}>
+                <input value={draft.nombre || ''} onChange={event => setAdminDrafts(prev => ({ ...prev, [admin.id]: { ...draft, nombre: event.target.value } }))} />
+                <input type="email" value={draft.email || ''} onChange={event => setAdminDrafts(prev => ({ ...prev, [admin.id]: { ...draft, email: event.target.value } }))} />
+                <select value={draft.status || 'activo'} onChange={event => setAdminDrafts(prev => ({ ...prev, [admin.id]: { ...draft, status: event.target.value } }))}>
+                  <option value="activo">Activo</option>
+                  <option value="pendiente">Pendiente</option>
+                  <option value="suspendido">Suspendido</option>
+                </select>
+                <span className="table-mini-status">{admin.uid ? 'Con acceso' : 'Sin contrasena'}</span>
+                <button className="btn btn-secondary small-btn" type="button" onClick={() => saveAdminDraft(admin)} disabled={saving || !isAdmin}>Guardar</button>
+                <button className="btn btn-secondary small-btn danger-btn" type="button" onClick={() => removeAdmin(admin)} disabled={saving || !isAdmin || isCurrentAdmin}>Eliminar</button>
+              </div>
+            )
+          })}
+          {!visibleAdmins.length && <p className="empty-state">No hay admins con ese filtro.</p>}
+        </div>
+      </article>
+
+      <article className="panel-card admin-card">
+        <div className="admin-section-title">
+          <div>
+            <h2>Teachers</h2>
+            <p>Alta rapida y edicion de accesos teacher.</p>
+          </div>
+        </div>
+
+        <form className="admin-form-grid" onSubmit={submitTeacher}>
+          <label className="form-field">
+            <span>ID publico</span>
+            <input
+              value={teacherForm.publicId}
+              onChange={event => setTeacherForm(prev => ({ ...prev, publicId: formatTeacherPublicIdInput(event.target.value) }))}
+              onBlur={() => setTeacherForm(prev => ({ ...prev, publicId: normalizeTeacherPublicIdInput(prev.publicId) }))}
+              placeholder="T-001"
+              required
+            />
+          </label>
+          <label className="form-field">
+            <span>Nombre</span>
+            <input value={teacherForm.name} onChange={event => setTeacherForm(prev => ({ ...prev, name: event.target.value }))} placeholder="Rolando" required />
+          </label>
+          <label className="form-field">
+            <span>Correo</span>
+            <input type="email" value={teacherForm.email} onChange={event => setTeacherForm(prev => ({ ...prev, email: event.target.value }))} placeholder="teacher@innova-t.com" />
+          </label>
+          <button className="btn btn-primary small-btn" type="submit" disabled={saving || !isAdmin}>Agregar teacher</button>
+        </form>
+
+        <div className="teacher-list section-gap">
+          {visibleTeachers.map(teacher => {
+            const draft = teacherDrafts[teacher.id] || {}
+            return (
+              <div className="teacher-row" key={teacher.id}>
+                <input
+                  value={draft.publicId || ''}
+                  onChange={event => setTeacherDrafts(prev => ({ ...prev, [teacher.id]: { ...draft, publicId: formatTeacherPublicIdInput(event.target.value) } }))}
+                  onBlur={() => setTeacherDrafts(prev => ({ ...prev, [teacher.id]: { ...draft, publicId: normalizeTeacherPublicIdInput(draft.publicId) } }))}
+                />
+                <input value={draft.name || ''} onChange={event => setTeacherDrafts(prev => ({ ...prev, [teacher.id]: { ...draft, name: event.target.value } }))} />
+                <input value={draft.email || ''} onChange={event => setTeacherDrafts(prev => ({ ...prev, [teacher.id]: { ...draft, email: event.target.value } }))} />
+                <span className="table-mini-status">
+                  {teacher.uid ? 'Con acceso' : adminAccessEmails.has(String(teacher.email || '').toLowerCase()) ? 'Acceso compartido' : 'Sin contrasena'}
+                </span>
+                <button className="btn btn-secondary small-btn" type="button" onClick={() => updateTeacher(teacher.id, { ...draft, uid: teacher.uid })} disabled={saving || !isAdmin}>Guardar</button>
+                <button className="btn btn-secondary small-btn danger-btn" type="button" onClick={() => deleteTeacher(teacher.id, teacher.publicId)} disabled={saving || !isAdmin}>Eliminar</button>
+              </div>
+            )
+          })}
+          {!visibleTeachers.length && <p className="empty-state">No hay teachers registrados.</p>}
+        </div>
+      </article>
+
+      <article className="panel-card admin-card">
+        <div className="admin-section-title">
+          <div>
+            <h2>Alumnos</h2>
+            <p>Vista general de alumnos; abre el perfil para editar datos academicos y pagos.</p>
+          </div>
+          <button className="btn btn-primary small-btn" type="button" onClick={() => setActiveTab('students')} disabled={!isAdmin}>Nuevo alumno</button>
+        </div>
+        <div className="excel-scroll">
+          <table className="excel-grid-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Nombre</th>
+                <th>Correo</th>
+                <th>Nivel</th>
+                <th>Acceso</th>
+                <th>Accion</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleStudents.map(student => (
+                <tr key={student.id}>
+                  <td>{student.publicId}</td>
+                  <td>{student.fullName}</td>
+                  <td>{student.email || 'Sin correo'}</td>
+                  <td>{getLevel(student.currentLevelId, data.levels)?.shortName || 'Sin nivel'}</td>
+                  <td>{student.uid ? 'Con acceso' : 'Sin contrasena'}</td>
+                  <td>
+                    <div className="table-actions">
+                      <button className="btn btn-secondary small-btn" type="button" onClick={() => {
+                        setSelectedStudentId(student.id)
+                        setActiveTab('students')
+                      }}>Abrir perfil</button>
+                      <button className="btn btn-secondary small-btn danger-btn" type="button" onClick={() => deleteStudent(student.id, student.publicId)} disabled={saving || !isAdmin}>Eliminar</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {!visibleStudents.length && (
+                <tr>
+                  <td colSpan="6">No hay alumnos registrados.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+  )
+
   const renderTeachersTab = () => (
     <section className="admin-tab-grid">
       <article className="panel-card admin-card">
@@ -1876,13 +2399,18 @@ function AdminDashboard() {
             <h2>CRUD Teachers</h2>
             <p>Admin crea ID, nombre y correo. El teacher crea su contrasena desde el login.</p>
           </div>
-          <button className="btn btn-secondary small-btn" type="button" onClick={seedTeachers} disabled={saving || !isAdmin}>Crear 5 base</button>
         </div>
 
         <form className="admin-form-grid" onSubmit={submitTeacher}>
           <label className="form-field">
             <span>ID publico</span>
-            <input value={teacherForm.publicId} onChange={event => setTeacherForm(prev => ({ ...prev, publicId: event.target.value.toUpperCase() }))} placeholder="T-001" required />
+            <input
+              value={teacherForm.publicId}
+              onChange={event => setTeacherForm(prev => ({ ...prev, publicId: formatTeacherPublicIdInput(event.target.value) }))}
+              onBlur={() => setTeacherForm(prev => ({ ...prev, publicId: normalizeTeacherPublicIdInput(prev.publicId) }))}
+              placeholder="T-001"
+              required
+            />
           </label>
           <label className="form-field">
             <span>Nombre</span>
@@ -1904,7 +2432,11 @@ function AdminDashboard() {
             const draft = teacherDrafts[teacher.id] || {}
             return (
               <div className="teacher-row" key={teacher.id}>
-                <input value={draft.publicId || ''} onChange={event => setTeacherDrafts(prev => ({ ...prev, [teacher.id]: { ...draft, publicId: event.target.value.toUpperCase() } }))} />
+                <input
+                  value={draft.publicId || ''}
+                  onChange={event => setTeacherDrafts(prev => ({ ...prev, [teacher.id]: { ...draft, publicId: formatTeacherPublicIdInput(event.target.value) } }))}
+                  onBlur={() => setTeacherDrafts(prev => ({ ...prev, [teacher.id]: { ...draft, publicId: normalizeTeacherPublicIdInput(draft.publicId) } }))}
+                />
                 <input value={draft.name || ''} onChange={event => setTeacherDrafts(prev => ({ ...prev, [teacher.id]: { ...draft, name: event.target.value } }))} />
                 <input value={draft.email || ''} onChange={event => setTeacherDrafts(prev => ({ ...prev, [teacher.id]: { ...draft, email: event.target.value } }))} />
                 <button className="btn btn-secondary small-btn" type="button" onClick={() => updateTeacher(teacher.id, { ...draft, uid: teacher.uid })} disabled={saving || !isAdmin}>Guardar</button>
@@ -2379,6 +2911,31 @@ function AdminDashboard() {
             <p>Vista rapida por alumno para validar cuantas horas pidio antes de formar clases.</p>
           </div>
         </div>
+        <div className="table-tools reservation-tools">
+          <input
+            className="table-input"
+            type="date"
+            value={reservationStudentFilters.date}
+            onChange={event => setReservationStudentFilters(prev => ({ ...prev, date: event.target.value }))}
+            list="reservation-student-filter-dates"
+            aria-label="Filtrar reservas por estudiante por dia"
+          />
+          <datalist id="reservation-student-filter-dates">
+            {reservationStudentFilterDates.map(date => <option value={date} key={date}>{formatDateInputLabel(date)}</option>)}
+          </datalist>
+          <select
+            className="table-input"
+            value={reservationStudentFilters.time}
+            onChange={event => setReservationStudentFilters(prev => ({ ...prev, time: event.target.value }))}
+            aria-label="Filtrar reservas por estudiante por hora"
+          >
+            <option value="">Todas las horas</option>
+            {reservationStudentFilterTimes.map(time => <option value={time} key={time}>{formatTimeLabel(time)}</option>)}
+          </select>
+          <button className="btn btn-secondary small-btn" type="button" onClick={() => setReservationStudentFilters({ date: '', time: '' })}>
+            Limpiar filtros
+          </button>
+        </div>
         <div className="excel-scroll">
           <table className="excel-grid-table reservation-student-table">
             <thead>
@@ -2422,6 +2979,31 @@ function AdminDashboard() {
           { value: 'date-desc', label: 'Fecha reciente' },
           { value: 'teacher-asc', label: 'Teacher' }
         ])}
+        <div className="table-tools reservation-tools">
+          <input
+            className="table-input"
+            type="date"
+            value={classRegistryFilters.date}
+            onChange={event => setClassRegistryFilters(prev => ({ ...prev, date: event.target.value }))}
+            list="class-registry-filter-dates"
+            aria-label="Filtrar clases registradas por dia"
+          />
+          <datalist id="class-registry-filter-dates">
+            {classRegistryFilterDates.map(date => <option value={date} key={date}>{formatDateInputLabel(date)}</option>)}
+          </datalist>
+          <select
+            className="table-input"
+            value={classRegistryFilters.time}
+            onChange={event => setClassRegistryFilters(prev => ({ ...prev, time: event.target.value }))}
+            aria-label="Filtrar clases registradas por hora"
+          >
+            <option value="">Todas las horas</option>
+            {classRegistryFilterTimes.map(time => <option value={time} key={time}>{formatTimeLabel(time)}</option>)}
+          </select>
+          <button className="btn btn-secondary small-btn" type="button" onClick={() => setClassRegistryFilters({ date: '', time: '' })}>
+            Limpiar dia/hora
+          </button>
+        </div>
         <div className="stack-list">
           {visibleClassesByRecentDate.map(classItem => {
             const lesson = getLesson(classItem.lessonIds?.[0], data.lessons)
@@ -2765,6 +3347,7 @@ function AdminDashboard() {
 
   const renderActiveTab = () => {
     if (activeTab === 'students') return renderStudentsTab()
+    if (activeTab === 'roles') return renderRolesTab()
     if (activeTab === 'teachers') return renderTeachersTab()
     if (activeTab === 'payments') return renderPaymentsTab()
     if (activeTab === 'classes') return renderClassesTab()
@@ -2779,10 +3362,23 @@ function AdminDashboard() {
         <aside className="sidebar admin-sidebar">
           <BrandLogo panel="Admin System" />
 
-          <nav className="sidebar-nav admin-tabs-nav">
+          <button
+            className="hamburger-menu-button"
+            type="button"
+            onClick={() => setIsMobileMenuOpen(open => !open)}
+            aria-expanded={isMobileMenuOpen}
+            aria-controls="admin-tabs-menu"
+          >
+            {uiText.menu}
+          </button>
+
+          <nav id="admin-tabs-menu" className={isMobileMenuOpen ? 'sidebar-nav admin-tabs-nav open' : 'sidebar-nav admin-tabs-nav'}>
             {TABS.map(tab => (
-              <button className={activeTab === tab.id ? 'active' : ''} key={tab.id} type="button" onClick={() => setActiveTab(tab.id)}>
-                {tab.label}
+              <button className={activeTab === tab.id ? 'active' : ''} key={tab.id} type="button" onClick={() => {
+                setActiveTab(tab.id)
+                setIsMobileMenuOpen(false)
+              }}>
+                {uiLanguage === 'en' ? tab.labelEn : tab.label}
               </button>
             ))}
           </nav>
@@ -2804,8 +3400,18 @@ function AdminDashboard() {
               </p>
             </div>
             <div className="header-actions">
+              <SystemControls />
               <Link className="btn btn-primary" to="/show-time" target="_blank" rel="noreferrer">Show time</Link>
-              <Link className="btn btn-secondary" to="/login">Cerrar sesion</Link>
+              {hasTeacherPanelAccess && (
+                <button
+                  className="btn btn-secondary"
+                  type="button"
+                  onClick={switchToTeacherPanel}
+                >
+                  {uiText.switchTeacher}
+                </button>
+              )}
+              <Link className="btn btn-secondary" to="/login">{uiText.logout}</Link>
             </div>
           </header>
 

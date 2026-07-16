@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { createUserWithEmailAndPassword, sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from 'firebase/auth'
 import BrandLogo from '../components/BrandLogo'
 import { auth } from '../firebase'
-import { dashboardPathForRole, getLoginErrorMessage, resolveLoginRecord, writeAccessProfile } from '../services/loginAccess'
+import { dashboardPathForRole, formatLoginIdentifierInput, getLoginErrorMessage, resolveLoginRecord, writeAccessProfile } from '../services/loginAccess'
 
 function CreatePassword() {
   const [loginId, setLoginId] = useState('')
@@ -35,9 +35,9 @@ function CreatePassword() {
         throw new Error('Las contrasenas no coinciden.')
       }
 
-      const loginRecord = await resolveLoginRecord(loginId)
-      if (!loginRecord.role || loginRecord.source === 'email') {
-        throw new Error('Ese correo no esta dado de alta como estudiante o teacher. Pide al admin que lo registre primero.')
+      const loginRecord = await resolveLoginRecord(loginId, { preferAdmin: true })
+      if (!['estudiante', 'teacher', 'admin'].includes(loginRecord.role)) {
+        throw new Error('Ese correo no esta dado de alta. Pide al admin que lo registre primero.')
       }
 
       if (loginRecord.uid) {
@@ -56,7 +56,9 @@ function CreatePassword() {
         } catch (signInError) {
           if (signInError.code === 'auth/invalid-credential' || signInError.code === 'auth/wrong-password') {
             await sendPasswordResetEmail(auth, loginRecord.email)
-            throw new Error(`Ese correo ya tiene acceso creado. Enviamos un correo de restablecimiento a ${loginRecord.email}.`)
+            setMessageType('success')
+            setMessage(`Ese correo ya tenia acceso creado. Enviamos un correo de restablecimiento a ${loginRecord.email}.`)
+            return
           }
           throw signInError
         }
@@ -84,7 +86,7 @@ function CreatePassword() {
           <span className="eyebrow">Primer acceso</span>
           <h1>Crea tu contrasena con tu ID oficial.</h1>
           <p>
-            Este flujo solo funciona si el admin ya registro tu correo y tu ID en estudiantes o teachers.
+            Este flujo solo funciona si el admin ya registro tu correo como alumno, teacher o admin.
           </p>
         </section>
 
@@ -104,7 +106,7 @@ function CreatePassword() {
                 type="text"
                 placeholder="0252, T-001 o correo"
                 value={loginId}
-                onChange={(event) => setLoginId(event.target.value)}
+                onChange={(event) => setLoginId(formatLoginIdentifierInput(event.target.value))}
                 disabled={loading}
                 autoComplete="username"
                 required

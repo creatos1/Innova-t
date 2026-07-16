@@ -4,6 +4,7 @@ import { updatePassword } from 'firebase/auth'
 import ActionMessageModal from '../components/ActionMessageModal'
 import BrandLogo from '../components/BrandLogo'
 import StatusBadge from '../components/StatusBadge'
+import SystemControls, { useUiLanguage } from '../components/SystemControls'
 import { getLesson, getLevel } from '../domain/academicCatalog'
 import { formatDate, formatDateTime, toDate } from '../domain/dateUtils'
 import { getStudentViewModel } from '../domain/instituteState'
@@ -25,11 +26,11 @@ import { downloadPaymentReceipt } from '../services/paymentReceiptPdf'
 import { useInstituteData } from '../services/useInstituteData'
 
 const TABS = [
-  { id: 'reserve', label: 'Reservar clase' },
-  { id: 'info', label: 'Info' },
-  { id: 'attendance', label: 'Asistencias' },
-  { id: 'payments', label: 'Pagos' },
-  { id: 'grades', label: 'Calificaciones' }
+  { id: 'reserve', label: 'Reservar clase', labelEn: 'Book class' },
+  { id: 'info', label: 'Info', labelEn: 'Info' },
+  { id: 'attendance', label: 'Asistencias', labelEn: 'Attendance' },
+  { id: 'payments', label: 'Pagos', labelEn: 'Payments' },
+  { id: 'grades', label: 'Calificaciones', labelEn: 'Grades' }
 ]
 
 function formatDateSafe(value) {
@@ -71,6 +72,7 @@ function buildUntilOptions(startTime, durations = []) {
 }
 
 function StudentDashboard() {
+  const uiLanguage = useUiLanguage()
   const {
     data,
     insights,
@@ -93,7 +95,10 @@ function StudentDashboard() {
   const [reservationForm, setReservationForm] = useState(defaultSlot)
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const navigate = useNavigate()
+  const logoutLabel = uiLanguage === 'en' ? 'Log out' : 'Cerrar sesion'
+  const menuLabel = uiLanguage === 'en' ? 'Menu' : 'Menu'
 
   useEffect(() => {
     if (loading || !profile) return
@@ -194,7 +199,12 @@ function StudentDashboard() {
     setReservationForm(prev => ({ ...prev, endTime: reservationUntilOptions[0].endTime }))
   }, [reservationForm.endTime, reservationUntilOptions])
 
-  const canCancelClass = (classItem) => isCancelableClass(classItem.startAt)
+  const canCancelClass = (classItem) => (
+    isCancelableClass(classItem.startAt)
+    && classItem.reservationSource === 'student-auto'
+    && classItem.status === 'pendiente_asignacion'
+    && !classItem.teacherId
+  )
 
   const reserveClass = async (event) => {
     event.preventDefault()
@@ -231,7 +241,10 @@ function StudentDashboard() {
   }
 
   const cancelClass = async (classItem) => {
-    if (!canCancelClass(classItem)) return
+    if (!canCancelClass(classItem)) {
+      setMessage('Esta clase ya fue formada por admin y ya no se puede cancelar desde alumno.')
+      return
+    }
     await cancelStudentReservation(classItem.id, student.id)
   }
 
@@ -606,10 +619,28 @@ function StudentDashboard() {
         <aside className="sidebar admin-sidebar">
           <BrandLogo panel="Student Panel" />
 
-          <nav className="sidebar-nav admin-tabs-nav">
+          <button
+            className="hamburger-menu-button"
+            type="button"
+            onClick={() => setIsMobileMenuOpen(open => !open)}
+            aria-expanded={isMobileMenuOpen}
+            aria-controls="student-tabs-menu"
+          >
+            {menuLabel}
+          </button>
+
+          <nav id="student-tabs-menu" className={isMobileMenuOpen ? 'sidebar-nav admin-tabs-nav open' : 'sidebar-nav admin-tabs-nav'}>
             {TABS.map(tab => (
-              <button className={activeTab === tab.id ? 'active' : ''} key={tab.id} type="button" onClick={() => setActiveTab(tab.id)}>
-                {tab.label}
+              <button
+                className={activeTab === tab.id ? 'active' : ''}
+                key={tab.id}
+                type="button"
+                onClick={() => {
+                  setActiveTab(tab.id)
+                  setIsMobileMenuOpen(false)
+                }}
+              >
+                {uiLanguage === 'en' ? tab.labelEn : tab.label}
               </button>
             ))}
           </nav>
@@ -629,7 +660,8 @@ function StudentDashboard() {
               <p className="page-subtitle">Reserva clases, revisa pagos, asistencias y calificaciones.</p>
             </div>
             <div className="header-actions">
-              <Link className="btn btn-secondary" to="/login">Cerrar sesion</Link>
+              <SystemControls />
+              <Link className="btn btn-secondary" to="/login">{logoutLabel}</Link>
             </div>
           </header>
 
