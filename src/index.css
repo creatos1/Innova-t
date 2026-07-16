@@ -1035,6 +1035,13 @@ p {
   white-space: nowrap;
 }
 
+.tiny-btn {
+  min-height: 28px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.76rem;
+}
+
 .metric-text {
   font-size: 1.16rem !important;
   line-height: 1.2;
@@ -2312,6 +2319,17 @@ html[data-theme='dark'] .sidebar-nav a:hover {
   margin: 10px 0;
 }
 
+.table-inline-field {
+  display: grid;
+  gap: 4px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.table-inline-field span {
+  color: var(--text-soft);
+}
+
 .table-input {
   width: 100%;
   min-width: 80px;
@@ -2319,6 +2337,19 @@ html[data-theme='dark'] .sidebar-nav a:hover {
   padding: 5px 8px;
   border: 1px solid #c9d3de;
   background: #ffffff;
+}
+
+.progress-preview-modal {
+  max-width: 760px;
+}
+
+.progress-preview-grid {
+  max-height: 58vh;
+  overflow: auto;
+}
+
+.nested-modal {
+  z-index: 80;
 }
 
 .payment-month {

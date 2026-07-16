@@ -176,7 +176,36 @@ function getGroupLevelDistance(selectedStudents = [], levels = []) {
   return Math.max(...orders) - Math.min(...orders)
 }
 
-function splitStudentIdsByLevelProximity(studentIds = [], studentsById = new Map(), levels = [], classCount = 1) {
+function getLessonSequenceNumber(lesson) {
+  const idMatch = String(lesson?.id || '').match(/^L(\d+)$/i)
+  if (idMatch) return Number(idMatch[1])
+  return Number(lesson?.globalOrder || lesson?.order || 0)
+}
+
+function getStudentAcademicPosition(student, lessons = [], levels = []) {
+  const currentLesson = lessons.find(lesson => lesson.id === student?.currentLessonId)
+  const completedPositions = (student?.completedLessonIds || [])
+    .map(lessonId => lessons.find(lesson => lesson.id === lessonId))
+    .filter(Boolean)
+    .map(getLessonSequenceNumber)
+  const currentPosition = getLessonSequenceNumber(currentLesson)
+  const maxCompleted = completedPositions.length ? Math.max(...completedPositions) : 0
+
+  if (currentPosition || maxCompleted) return Math.max(currentPosition, maxCompleted)
+  const levelOrderById = buildLevelOrderMap(levels)
+  return (levelOrderById.get(getCanonicalLevelId(student?.currentLevelId)) || 0) * 100
+}
+
+function getGroupAcademicDistance(selectedStudents = [], lessons = [], levels = []) {
+  const positions = selectedStudents
+    .map(student => getStudentAcademicPosition(student, lessons, levels))
+    .filter(position => Number.isFinite(position) && position > 0)
+
+  if (positions.length < 2) return 0
+  return Math.max(...positions) - Math.min(...positions)
+}
+
+function splitStudentIdsByLevelProximity(studentIds = [], studentsById = new Map(), levels = [], classCount = 1, lessons = []) {
   const levelOrderById = buildLevelOrderMap(levels)
   const cleanStudentIds = uniqueValues(studentIds)
   const count = Math.max(1, Math.min(Number(classCount) || 1, cleanStudentIds.length || 1))
@@ -186,7 +215,9 @@ function splitStudentIdsByLevelProximity(studentIds = [], studentsById = new Map
     const orderA = levelOrderById.get(getCanonicalLevelId(studentA?.currentLevelId)) ?? 999
     const orderB = levelOrderById.get(getCanonicalLevelId(studentB?.currentLevelId)) ?? 999
 
-    return orderA - orderB || (studentA?.fullName || '').localeCompare(studentB?.fullName || '', 'es')
+    return orderA - orderB
+      || getStudentAcademicPosition(studentA, lessons, levels) - getStudentAcademicPosition(studentB, lessons, levels)
+      || (studentA?.fullName || '').localeCompare(studentB?.fullName || '', 'es')
   })
   const baseSize = Math.floor(orderedStudentIds.length / count)
   const remainder = orderedStudentIds.length % count
@@ -247,6 +278,7 @@ function compactStudent(student, lessons = [], levels = [], classes = []) {
     levelName: level?.shortName || level?.name || '',
     lessonId: student.currentLessonId || '',
     lessonName: lesson?.name || '',
+    academicPosition: getStudentAcademicPosition(student, lessons, levels),
     completedLessonIds: Array.isArray(student.completedLessonIds) ? student.completedLessonIds : [],
     avoidLessonIds: Array.isArray(student.completedLessonIds) ? student.completedLessonIds : [],
     lessonAttempts: buildLessonAttemptCounts(student, classes),
@@ -298,6 +330,8 @@ Reglas reales:
 - Si el grupo mezcla niveles bastante diferenciados (2 o mas niveles de distancia), usa Tema Libre: FREE_TALKING_TIME, FREE_VOCABULARY o FREE_GAMES.
 - Puedes proponer varias clases para la misma fecha/hora si hay classrooms activos suficientes y eso mejora el acomodo.
 - Nunca propongas mas clases simultaneas que classrooms activos disponibles.
+- Nunca propongas mas clases simultaneas que teacherCapacity.
+- Separa alumnos si el avance academico es muy distinto aunque sus niveles esten cercanos. Ejemplo: L1 no debe ir con L18 si hay teachers/classrooms disponibles.
 - Maximo 8 alumnos por clase.
 - No inventes IDs.
 - No escribas warnings sobre alumnos que no aparecen en Reservas pendientes.
@@ -330,6 +364,9 @@ ${JSON.stringify(payload.students, null, 2)}
 
 Classrooms disponibles:
 ${JSON.stringify(payload.classrooms || [], null, 2)}
+
+Teachers disponibles para este bloque:
+${JSON.stringify(payload.teacherCapacity || 1, null, 2)}
 
 Historial de clases programadas:
 ${JSON.stringify(payload.scheduledClasses, null, 2)}
@@ -403,10 +440,12 @@ function pickBestLessonForMixedGroup(selectedStudents = [], lessons = [], levels
   return scored[0]?.lesson || pickFreeTopicLesson(selectedStudents, lessons, attemptsByStudent)
 }
 
-function buildLocalClassFormationSuggestions({ pendingClasses = [], students = [], teachers = [], classes = [], lessons = [], levels = [], classrooms = [], fallbackReason = '' }) {
+function buildLocalClassFormationSuggestions({ pendingClasses = [], students = [], teachers = [], classes = [], lessons = [], levels = [], classrooms = [], teacherCapacity = null, fallbackReason = '' }) {
   const studentsById = new Map(students.map(student => [student.id, student]))
   const attemptsByStudent = new Map(students.map(student => [student.id, buildLessonAttemptCounts(student, classes)]))
   const activeClassroomLimit = Math.max(1, classrooms.filter(classroom => classroom.active !== false).length || 1)
+  const activeTeacherLimit = Math.max(1, Math.min(Number(teacherCapacity || teachers.length || 1), teachers.length || Number(teacherCapacity) || 1))
+  const formationLimit = Math.max(1, Math.min(activeClassroomLimit, activeTeacherLimit))
   const slotGroups = Array.from(pendingClasses.reduce((groups, classItem) => {
     const key = getSlotKey(classItem)
     const current = groups.get(key) || []
@@ -418,22 +457,25 @@ function buildLocalClassFormationSuggestions({ pendingClasses = [], students = [
   const suggestions = slotGroups.flatMap(slotClasses => {
     const orderedClasses = [...slotClasses].sort((a, b) => (a.id || '').localeCompare(b.id || '', 'es'))
     const studentIds = uniqueValues(orderedClasses.flatMap(classItem => classItem.studentIds || []))
+    const selectedStudents = studentIds.map(studentId => studentsById.get(studentId)).filter(Boolean)
     const uniqueLevelCount = studentIds.reduce((levelIds, studentId) => {
       const student = studentsById.get(studentId)
       const levelId = getCanonicalLevelId(student?.currentLevelId) || 'sin-nivel'
       levelIds.add(levelId)
       return levelIds
     }, new Set()).size
+    const academicDistance = getGroupAcademicDistance(selectedStudents, lessons, levels)
     const requiredByCapacity = Math.ceil(studentIds.length / 8)
-    const desiredByLevelProximity = activeClassroomLimit > 1 && uniqueLevelCount > 1
-      ? Math.min(activeClassroomLimit, uniqueLevelCount, studentIds.length)
+    const desiredByLevelProximity = formationLimit > 1 && (uniqueLevelCount > 1 || academicDistance > 4)
+      ? Math.min(formationLimit, Math.max(uniqueLevelCount, Math.ceil(academicDistance / 8)), studentIds.length)
       : 1
     const desiredClassCount = Math.max(requiredByCapacity, desiredByLevelProximity)
     const chunks = splitStudentIdsByLevelProximity(
       studentIds,
       studentsById,
       levels,
-      Math.min(activeClassroomLimit, desiredClassCount)
+      Math.min(formationLimit, desiredClassCount),
+      lessons
     ).flatMap(chunk => chunkItems(chunk, 8))
 
     return chunks.map((chunk, chunkIndex) => {
@@ -627,7 +669,7 @@ export function generateGroupRecommendations(students, recommendations, levels =
   }))
 }
 
-function buildClassFormationPayload({ pendingClasses = [], students = [], classes = [], lessons = [], levels = [], classrooms = [], targetSlot = null }) {
+function buildClassFormationPayload({ pendingClasses = [], students = [], classes = [], lessons = [], levels = [], classrooms = [], teacherCapacity = null, targetSlot = null }) {
   const catalog = { lessons, levels }
   const scheduledClasses = classes
     .filter(classItem => classItem.teacherId && (classItem.status || 'programada') !== 'cancelada')
@@ -653,6 +695,7 @@ function buildClassFormationPayload({ pendingClasses = [], students = [], classe
     })),
     pendingClasses: pendingClasses.map(classItem => compactPendingClass(classItem, catalog)),
     students: students.map(student => compactStudent(student, lessons, levels, classes)),
+    teacherCapacity: Math.max(1, Number(teacherCapacity || 1)),
     classrooms: classrooms.map(classroom => ({
       id: classroom.id,
       name: classroom.name || '',
@@ -689,8 +732,8 @@ async function requestMistralClassPlan(prompt) {
   return response.json()
 }
 
-export async function generateClassFormationSuggestions({ pendingClasses = [], students = [], teachers = [], classes = [], lessons = [], levels = [], classrooms = [], targetSlot = null }) {
-  const localPlan = (fallbackReason = '') => buildLocalClassFormationSuggestions({ pendingClasses, students, teachers, classes, lessons, levels, classrooms, fallbackReason })
+export async function generateClassFormationSuggestions({ pendingClasses = [], students = [], teachers = [], classes = [], lessons = [], levels = [], classrooms = [], teacherCapacity = null, targetSlot = null }) {
+  const localPlan = (fallbackReason = '') => buildLocalClassFormationSuggestions({ pendingClasses, students, teachers, classes, lessons, levels, classrooms, teacherCapacity, fallbackReason })
 
   if (!pendingClasses.length) {
     return {
@@ -712,6 +755,7 @@ export async function generateClassFormationSuggestions({ pendingClasses = [], s
     lessons,
     levels,
     classrooms,
+    teacherCapacity,
     targetSlot
   })
 

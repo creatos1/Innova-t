@@ -304,7 +304,36 @@ function getLevelOrderForStudent(student, levels = []) {
   return Number(getLevel(canonicalLevelId, levels)?.order ?? 999)
 }
 
-function splitStudentIdsByLevelProximity(studentIds = [], students = [], levels = [], classCount = 1) {
+function getLessonSequenceNumber(lesson) {
+  const idMatch = String(lesson?.id || '').match(/^L(\d+)$/i)
+  if (idMatch) return Number(idMatch[1])
+  return Number(lesson?.globalOrder || lesson?.order || 0)
+}
+
+function getStudentAcademicPosition(student, lessons = [], levels = []) {
+  const currentLesson = lessons.find(lesson => lesson.id === student?.currentLessonId)
+  const completedPositions = (student?.completedLessonIds || [])
+    .map(lessonId => lessons.find(lesson => lesson.id === lessonId))
+    .filter(Boolean)
+    .map(getLessonSequenceNumber)
+  const currentPosition = getLessonSequenceNumber(currentLesson)
+  const maxCompleted = completedPositions.length ? Math.max(...completedPositions) : 0
+
+  if (currentPosition || maxCompleted) return Math.max(currentPosition, maxCompleted)
+  return getLevelOrderForStudent(student, levels) * 100
+}
+
+function getStudentGroupAcademicDistance(studentIds = [], students = [], lessons = [], levels = []) {
+  const studentsById = new Map(students.map(student => [student.id, student]))
+  const positions = studentIds
+    .map(studentId => getStudentAcademicPosition(studentsById.get(studentId), lessons, levels))
+    .filter(position => Number.isFinite(position) && position > 0)
+
+  if (positions.length < 2) return 0
+  return Math.max(...positions) - Math.min(...positions)
+}
+
+function splitStudentIdsByLevelProximity(studentIds = [], students = [], levels = [], classCount = 1, lessons = []) {
   const studentsById = new Map(students.map(student => [student.id, student]))
   const cleanStudentIds = uniqueValues(studentIds)
   const count = Math.max(1, Math.min(Number(classCount) || 1, cleanStudentIds.length || 1))
@@ -312,6 +341,7 @@ function splitStudentIdsByLevelProximity(studentIds = [], students = [], levels 
     const studentA = studentsById.get(a)
     const studentB = studentsById.get(b)
     return getLevelOrderForStudent(studentA, levels) - getLevelOrderForStudent(studentB, levels)
+      || getStudentAcademicPosition(studentA, lessons, levels) - getStudentAcademicPosition(studentB, lessons, levels)
       || (studentA?.fullName || '').localeCompare(studentB?.fullName || '', 'es')
   })
   const baseSize = Math.floor(orderedStudentIds.length / count)
@@ -326,12 +356,13 @@ function splitStudentIdsByLevelProximity(studentIds = [], students = [], levels 
   }).filter(chunk => chunk.length)
 }
 
-function getRecommendedClassCountForStudents(studentIds = [], students = [], levels = [], classroomLimit = 1) {
+function getRecommendedClassCountForStudents(studentIds = [], students = [], levels = [], classroomLimit = 1, lessons = []) {
   const cleanStudentIds = uniqueValues(studentIds)
   if (cleanStudentIds.length <= 1) return cleanStudentIds.length
   if (cleanStudentIds.length <= 8) {
     const distance = getStudentGroupLevelDistance(cleanStudentIds, students, levels)
-    if (distance <= 1) return 1
+    const academicDistance = getStudentGroupAcademicDistance(cleanStudentIds, students, lessons, levels)
+    if (distance <= 1 && academicDistance <= 4) return 1
     return Math.min(classroomLimit, Math.ceil(cleanStudentIds.length / 2))
   }
 
@@ -376,6 +407,23 @@ function findDefaultLessonForStudentGroup(studentIds = [], students = [], lesson
     || lessons.find(lesson => !isFreeTopicLevelId(lesson.levelId) && isCleanForGroup(lesson))?.id
     || freeTopicLesson?.id
     || ''
+}
+
+function isLessonViableForStudentGroup(lesson, studentIds = [], students = [], lessons = [], levels = []) {
+  if (!lesson?.id || !studentIds.length) return false
+  const studentsById = new Map(students.map(student => [student.id, student]))
+  const selectedStudents = studentIds.map(studentId => studentsById.get(studentId)).filter(Boolean)
+  const alreadyTaken = selectedStudents.some(student => (student.completedLessonIds || []).includes(lesson.id))
+  if (alreadyTaken) return false
+
+  const levelDistance = getStudentGroupLevelDistance(studentIds, students, levels)
+  if (levelDistance >= 2) return isFreeTopicLevelId(lesson.levelId)
+
+  const representedLevels = new Set(selectedStudents.map(student => getCanonicalLevelId(student.currentLevelId)).filter(Boolean))
+  const currentLessonIds = new Set(selectedStudents.map(student => student.currentLessonId).filter(Boolean))
+  return isFreeTopicLevelId(lesson.levelId)
+    || representedLevels.has(getCanonicalLevelId(lesson.levelId))
+    || currentLessonIds.has(lesson.id)
 }
 
 function getHourWord(hours) {
@@ -528,6 +576,8 @@ function AdminDashboard() {
   const [aiPlanDrafts, setAiPlanDrafts] = useState([])
   const [aiPlanClassCount, setAiPlanClassCount] = useState(1)
   const [aiPlanCloseConfirm, setAiPlanCloseConfirm] = useState(false)
+  const [availableTeacherSlots, setAvailableTeacherSlots] = useState(0)
+  const [progressPreviewStudentId, setProgressPreviewStudentId] = useState('')
   const [classForm, setClassForm] = useState({
     lessonId: '',
     teacherId: '',
@@ -605,6 +655,7 @@ function AdminDashboard() {
   const requireLogin = !loading && (!user || !profile)
   const sortedStudents = useMemo(() => sortByName(data.students), [data.students])
   const sortedTeachers = useMemo(() => sortByName(data.teachers), [data.teachers])
+  const activeTeacherLimit = Math.max(1, Math.min(Number(availableTeacherSlots) || sortedTeachers.length || 1, sortedTeachers.length || 1))
   const hasTeacherPanelAccess = useMemo(() => (
     sortedTeachers.some(teacher => (
       String(teacher.email || '').toLowerCase() === String(profile?.email || user?.email || '').toLowerCase()
@@ -650,6 +701,12 @@ function AdminDashboard() {
   const selectedStudent = useMemo(() => (
     insights.students.find(student => student.id === selectedStudentId)
   ), [insights.students, selectedStudentId])
+  const progressPreviewStudent = useMemo(() => (
+    sortedStudents.find(student => student.id === progressPreviewStudentId)
+  ), [progressPreviewStudentId, sortedStudents])
+  const progressPreviewRegisteredLessons = useMemo(() => (
+    getRegisteredLessonIdsForStudent(progressPreviewStudentId, data.classes, data.attendance, sortedStudents)
+  ), [data.attendance, data.classes, progressPreviewStudentId, sortedStudents])
   const selectedPaymentStudent = useMemo(() => (
     sortedStudents.find(student => student.id === paymentForm.studentId)
   ), [paymentForm.studentId, sortedStudents])
@@ -965,6 +1022,11 @@ function AdminDashboard() {
   }, [activeClassrooms, classForm.classroomId])
 
   useEffect(() => {
+    const teacherCount = sortedTeachers.length || 1
+    setAvailableTeacherSlots(prev => Math.max(1, Math.min(Number(prev) || teacherCount, teacherCount)))
+  }, [sortedTeachers.length])
+
+  useEffect(() => {
     if (teacherForm.publicId) return
     setTeacherForm(prev => ({ ...prev, publicId: nextTeacherPublicId(sortedTeachers) }))
   }, [sortedTeachers, teacherForm.publicId])
@@ -1238,8 +1300,9 @@ function AdminDashboard() {
 
   const getAiPlanMaxClasses = (slotGroup = aiPlanGroup) => {
     const classroomLimit = activeClassrooms.length || 1
+    const teacherLimit = activeTeacherLimit || 1
     const studentLimit = slotGroup?.studentIds?.length || 1
-    return Math.max(1, Math.min(classroomLimit, studentLimit))
+    return Math.max(1, Math.min(classroomLimit, teacherLimit, studentLimit))
   }
 
   const getAiPlanRecommendedClassCount = (slotGroup = aiPlanGroup, suggestions = []) => {
@@ -1249,11 +1312,12 @@ function AdminDashboard() {
       slotGroup?.studentIds || [],
       sortedStudents,
       data.levels,
-      maxClasses
+      maxClasses,
+      data.lessons
     )
 
     if (!suggestionCount) return Math.max(1, proximityCount)
-    return Math.max(1, Math.min(maxClasses, proximityCount, suggestionCount))
+    return Math.max(1, Math.min(maxClasses, Math.max(proximityCount, suggestionCount)))
   }
 
   const getSourceClassIdsForStudentIds = (slotGroup, studentIds = []) => {
@@ -1271,7 +1335,7 @@ function AdminDashboard() {
     const maxClasses = getAiPlanMaxClasses(slotGroup)
     const classCount = Math.max(1, Math.min(Number(requestedClassCount) || 1, maxClasses))
     const usableSuggestions = (suggestions || []).filter(suggestion => suggestion.studentIds?.length)
-    const chunks = splitStudentIdsByLevelProximity(slotGroup.studentIds, sortedStudents, data.levels, classCount)
+    const chunks = splitStudentIdsByLevelProximity(slotGroup.studentIds, sortedStudents, data.levels, classCount, data.lessons)
     const assigned = new Set(chunks.flat())
     const missing = slotGroup.studentIds.filter(studentId => !assigned.has(studentId))
 
@@ -1288,13 +1352,16 @@ function AdminDashboard() {
       const groupLevelDistance = getStudentGroupLevelDistance(studentIds, sortedStudents, data.levels)
       const shouldIgnoreFreeTopic = groupLevelDistance < 2 && isFreeTopicLevelId(suggestionLesson?.levelId)
       const defaultLessonId = findDefaultLessonForStudentGroup(studentIds, sortedStudents, data.lessons, data.levels)
+      const viableSuggestionLessonId = !shouldIgnoreFreeTopic && isLessonViableForStudentGroup(suggestionLesson, studentIds, sortedStudents, data.lessons, data.levels)
+        ? suggestion.lessonId
+        : ''
 
       return {
         id: previous.id || `${slotGroup.id}-draft-${index + 1}`,
         title: `Clase ${index + 1}`,
         classId,
         sourceClassIds,
-        lessonId: previous.lessonId || (shouldIgnoreFreeTopic ? '' : suggestion.lessonId) || defaultLessonId,
+        lessonId: previous.lessonId || viableSuggestionLessonId || defaultLessonId,
         teacherId: previous.teacherId || '',
         classroomId: previous.classroomId || activeClassrooms[index % Math.max(activeClassrooms.length, 1)]?.id || '',
         studentIds,
@@ -1697,6 +1764,7 @@ function AdminDashboard() {
         lessons: data.lessons,
         levels: data.levels,
         classrooms: data.classrooms,
+        teacherCapacity: activeTeacherLimit,
         targetSlot
       })
       const nextPlan = {
@@ -2722,6 +2790,37 @@ function AdminDashboard() {
     )
   }
 
+  const renderProgressPreviewModal = () => {
+    if (!progressPreviewStudent) return null
+
+    return (
+      <div className="modal-backdrop nested-modal" role="presentation">
+        <section className="modal-card panel-card admin-card progress-preview-modal" role="dialog" aria-modal="true" aria-labelledby="progress-preview-title">
+          <div className="admin-section-title">
+            <div>
+              <h2 id="progress-preview-title">Progreso del alumno</h2>
+              <p>{progressPreviewStudent.publicId} - {progressPreviewStudent.fullName}</p>
+            </div>
+            <button className="btn btn-secondary small-btn" type="button" onClick={() => setProgressPreviewStudentId('')}>Cerrar</button>
+          </div>
+          <div className="lesson-history-grid progress-preview-grid">
+            {sortedLevels.map(level => (
+              <div className="lesson-history-group" key={level.id}>
+                <strong>{level.shortName || level.name}</strong>
+                {getLessonsByLevel(level.id, data.lessons).map(lesson => (
+                  <label className="lesson-history-row" key={lesson.id}>
+                    <input type="checkbox" checked={progressPreviewRegisteredLessons.has(lesson.id)} readOnly />
+                    <span>{lesson.order}. {lesson.name}</span>
+                  </label>
+                ))}
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+    )
+  }
+
   const renderAiPlanModal = () => {
     if (!isAiPlanModalOpen || !aiPlanGroup) return null
 
@@ -2836,6 +2935,17 @@ function AdminDashboard() {
                               <strong>{student.publicId} - {student.fullName}</strong>
                               <small>{getLevel(student.currentLevelId, data.levels)?.shortName || 'Sin nivel'}</small>
                             </span>
+                            <button
+                              className="btn btn-secondary tiny-btn"
+                              type="button"
+                              onClick={event => {
+                                event.preventDefault()
+                                event.stopPropagation()
+                                setProgressPreviewStudentId(student.id)
+                              }}
+                            >
+                              Ver progreso
+                            </button>
                           </label>
                         )
                       })}
@@ -2894,6 +3004,18 @@ function AdminDashboard() {
             <option value="">Todas las horas</option>
             {reservationFilterTimes.map(time => <option value={time} key={time}>{formatTimeLabel(time)}</option>)}
           </select>
+          <label className="table-inline-field">
+            <span>No. de teachers disponibles</span>
+            <select
+              className="table-input"
+              value={activeTeacherLimit}
+              onChange={event => setAvailableTeacherSlots(Number(event.target.value) || 1)}
+            >
+              {Array.from({ length: Math.max(1, sortedTeachers.length || 1) }, (_, index) => index + 1).map(count => (
+                <option value={count} key={count}>{count}</option>
+              ))}
+            </select>
+          </label>
           <button className="btn btn-secondary small-btn" type="button" onClick={() => setReservationFilters({ date: '', time: '' })}>
             Limpiar filtros
           </button>
@@ -3468,6 +3590,7 @@ function AdminDashboard() {
               {renderClassModal()}
               {renderPaymentCaptureModal()}
               {renderAiPlanModal()}
+              {renderProgressPreviewModal()}
               <ActionMessageModal message={message} onClose={() => setMessage('')} />
             </>
           )}
